@@ -9,7 +9,7 @@
   "backend": "metal",
   "context": 2048,
   "max_context": 8192,
-  "min_ram_bytes": 8589934592,
+  "min_ram_bytes": 4294967296,
   "entry": "config.json",
   "files": [
     {
