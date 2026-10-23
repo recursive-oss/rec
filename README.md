@@ -26,10 +26,16 @@ excluded.</sub></p>
 
 ## Requirements
 
-- Apple Silicon Mac with an M4 Pro, M5 Pro, or M5 Max
-- At least 48 GB unified memory
+- Apple Silicon Mac with an M2 Max, M4 Pro, M5 Pro, or M5 Max
+- At least 48 GiB unified memory
 - About 30 GB free disk space
 - [Node.js 22](https://nodejs.org/en/download) and npm for pi
+
+M2 Max requires at least 48 GiB unified memory and uses the standard MLX
+backend (native fallback), not the resident decode backend. Resident mode is
+not supported on M2 Max. Measure throughput on your own machine with your
+actual workload; the M4 Pro results above do not establish M2 Max performance
+or imply the same speedup.
 
 
 ## Install

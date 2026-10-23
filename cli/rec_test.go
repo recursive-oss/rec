@@ -356,10 +356,34 @@ func TestManifestSchemaAndPaths(t *testing.T) {
 }
 
 func TestAppleChipAllowlist(t *testing.T) {
-	for chip, ok := range map[string]bool{"Apple M4 Pro": true, "Apple M5 Pro": true, "Apple M5 Max": true, "Apple M4 Max": false, "Apple M4": false, "Apple M1 Pro": false} {
-		if (checkAppleChip(chip) == nil) != ok {
-			t.Fatalf("%s: want supported=%t", chip, ok)
-		}
+	for chip, ok := range map[string]bool{
+		"Apple M2 Max":   true,
+		"Apple M4 Pro":   true,
+		"Apple M5 Pro":   true,
+		"Apple M5 Max":   true,
+		"Apple M2":       false,
+		"Apple M2 Pro":   false,
+		"Apple M2 Ultra": false,
+		"Apple M4 Max":   false,
+		"Apple M4":       false,
+		"Apple M1 Pro":   false,
+		"Apple M2 Max ":  false,
+		"apple m2 max":   false,
+		"":               false,
+		"Intel Core i9":  false,
+	} {
+		t.Run(chip, func(t *testing.T) {
+			err := checkAppleChip(chip)
+			if (err == nil) != ok {
+				t.Fatalf("%q: want supported=%t, got error %v", chip, ok, err)
+			}
+			if !ok {
+				want := fmt.Sprintf("Flint requires an Apple M2 Max, M4 Pro, M5 Pro or M5 Max; detected %s", chip)
+				if err.Error() != want {
+					t.Fatalf("error = %q, want %q", err.Error(), want)
+				}
+			}
+		})
 	}
 }
 
