@@ -171,6 +171,14 @@ class RoutingTests(unittest.TestCase):
             )
             self.assertTrue(mx.array_equal(trace[2048:], expected).item(), seed)
 
+    def test_attention_loop_resolves_each_kv_address_once(self):
+        # Per-element KVView indexing recomputes the block select eight times per token.
+        loop = function(megakernel._HEADER, "attention_partial_path_w53")
+        loop = loop[loop.index("#pragma clang loop") :]
+        self.assertNotIn("key_base[", loop)
+        self.assertNotIn("value_base[", loop)
+        self.assertEqual(loop.count("address("), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

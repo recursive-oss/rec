@@ -645,18 +645,18 @@ inline void attention_partial_path_w53(const device bfloat16_t* q,KVView k,
             token+=parts;
         }
         bfloat16_t next_key[4],next_value[4];
-        if(token<count)for(uint j=0;j<4;++j) {
-            uint at=uint(token)*128+j;
-            next_key[j]=key_base[at];next_value[j]=value_base[at];
+        if(token<count){
+            const device bfloat16_t *kp=key_base.address(uint(token)*128),*vp=value_base.address(uint(token)*128);
+            for(uint j=0;j<4;++j){next_key[j]=kp[j];next_value[j]=vp[j];}
         }
         #pragma clang loop unroll_count(__UNROLL__)
         for(;token<count;token+=parts) {
             uint at=uint(token)*128;
             float key[4];bfloat16_t value[4];
             for(uint j=0;j<4;++j){key[j]=float(next_key[j]);value[j]=next_value[j];}
-            if(token+parts<count)for(uint j=0;j<4;++j) {
-                uint next=at+parts*128+j;
-                next_key[j]=key_base[next];next_value[j]=value_base[next];
+            if(token+parts<count){
+                const device bfloat16_t *kp=key_base.address(at+parts*128),*vp=value_base.address(at+parts*128);
+                for(uint j=0;j<4;++j){next_key[j]=kp[j];next_value[j]=vp[j];}
             }
             float scores[HEADS];
             for(uint h=0;h<HEADS;++h) {
