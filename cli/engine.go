@@ -15,10 +15,10 @@ func launchCommand(p Paths, m Manifest, runtimeDir, model string, port int) (str
 }
 
 func checkAppleChip(name string) error {
-	for _, chip := range []string{"Apple M4 Pro", "Apple M5 Pro", "Apple M5 Max"} {
+	for _, chip := range []string{"Apple M3 Max", "Apple M4 Pro", "Apple M5 Pro", "Apple M5 Max"} {
 		if name == chip {
 			return nil
 		}
 	}
-	return fmt.Errorf("Flint requires an Apple M4 Pro, M5 Pro or M5 Max; detected %s", name)
+	return fmt.Errorf("Flint requires an Apple M3 Max, M4 Pro, M5 Pro or M5 Max; detected %s", name)
 }

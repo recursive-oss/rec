@@ -28,7 +28,7 @@ def selected_weights(probabilities, bias):
 @unittest.skipUnless(mx.metal.is_available(), "requires Apple Metal")
 class RoutingTests(unittest.TestCase):
     @unittest.skipUnless(
-        mx.metal.is_available() and resident_device(), "requires M4 Pro, M5 Pro or M5 Max"
+        mx.metal.is_available() and resident_device(), "requires M3 Max, M4 Pro, M5 Pro or M5 Max"
     )
     def test_scores_survive_attention_scratch_reuse(self):
         probabilities = (mx.arange(256).astype(mx.float32) + 1) / 1024

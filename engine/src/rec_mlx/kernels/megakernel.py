@@ -988,7 +988,11 @@ class FullModel:
         self.team_mlp_workers = mlp_workers
         self.workers = workers
         assert model.config["quantization"]["group_size"] == 64
-        assert mx.device_info()["architecture"] in ("applegpu_g16s", "applegpu_g17s")
+        assert mx.device_info()["architecture"] in (
+            "applegpu_g15s",
+            "applegpu_g16s",
+            "applegpu_g17s",
+        )
         assert len(model.layers) == 49 and model.config["hidden_size"] == 2048
         assert tuple(
             model.config[key]
