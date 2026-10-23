@@ -21,6 +21,7 @@ parser.add_argument("model")
 parser.add_argument("--model-dir", type=Path, required=True)
 parser.add_argument("--manifest", type=Path, required=True)
 parser.add_argument("--port", type=int, required=True)
+parser.add_argument("--host", default="127.0.0.1")
 parser.add_argument("--context-limit", type=int, required=True)
 parser.add_argument("--api-key-file", type=Path, required=True)
 args = parser.parse_args()
@@ -126,5 +127,5 @@ class Handler(http.server.BaseHTTPRequestHandler):
         )
 
 
-print(f"Listening on http://127.0.0.1:{args.port}/v1", flush=True)
-http.server.HTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
+print(f"Listening on http://{args.host}:{args.port}/v1", flush=True)
+http.server.HTTPServer((args.host, args.port), Handler).serve_forever()

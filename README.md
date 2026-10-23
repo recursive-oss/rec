@@ -114,6 +114,16 @@ The Anthropic-compatible API is available at
 `http://127.0.0.1:11500` and send the token from `rec auth token` as a bearer
 token or as `x-api-key`. The model is `flint`.
 
+By default the server binds to loopback only. To expose it on your network for
+other machines to reach, start it on all interfaces:
+
+```bash
+rec serve --host 0.0.0.0
+```
+
+The endpoint then listens on every interface; connect through the machine's IP
+address, for example `http://192.168.1.42:11500/v1`. Keep the API key required
+and restrict the interface with a firewall or VPN when binding to `0.0.0.0`.
 
 ## Commands
 

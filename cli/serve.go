@@ -39,10 +39,23 @@ func instanceKey(m Manifest) string {
 	return digest(b)
 }
 
-func sameInstance(s Status, m Manifest, port int) bool {
+// endpointHost maps a bind address to the address clients can dial. The wildcard
+// address reports loopback so local clients keep a stable endpoint.
+func endpointHost(host string) string {
+	if host == "" || host == "0.0.0.0" {
+		return "127.0.0.1"
+	}
+	return host
+}
+
+func instanceEndpoint(host string, port int) string {
+	return fmt.Sprintf("http://%s:%d/v1", endpointHost(host), port)
+}
+
+func sameInstance(s Status, m Manifest, host string, port int) bool {
 	return s.Ready && s.Model == m.Model && s.Runtime == m.RuntimeSHA &&
 		s.Revision == m.Revision && s.Context == m.Context &&
-		s.Instance == instanceKey(m) && s.Endpoint == fmt.Sprintf("http://127.0.0.1:%d/v1", port)
+		s.Instance == instanceKey(m) && s.Endpoint == instanceEndpoint(host, port)
 }
 
 func control(p Paths, action string) (Status, error) {
@@ -210,11 +223,11 @@ func probe(ctx context.Context, base, key, model string, phase ...func(string)) 
 	return nil
 }
 
-func serve(parent context.Context, p Paths, m Manifest, override string, port int, out io.Writer, background ...bool) error {
+func serve(parent context.Context, p Paths, m Manifest, override string, host string, port int, out io.Writer, background ...bool) error {
 	l, e := lock(filepath.Join(p.State, "instance.lock"))
 	if e != nil {
 		if s, err := control(p, "status"); err == nil {
-			if sameInstance(s, m, port) {
+			if sameInstance(s, m, host, port) {
 				newScreen(out).succeeded(m.Model+" is already running", s.Endpoint)
 				return nil
 			}
@@ -225,13 +238,13 @@ func serve(parent context.Context, p Paths, m Manifest, override string, port in
 	defer unlock(l)
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	address := fmt.Sprintf("127.0.0.1:%d", port)
+	address := fmt.Sprintf("%s:%d", host, port)
 	check, e := net.Listen("tcp", address)
 	if e != nil {
 		return fmt.Errorf("port %d is unavailable; use --port with a free port", port)
 	}
 	check.Close()
-	status := Status{Engine: m.Engine, Version: Version, Model: m.Model, Revision: m.Revision, Runtime: m.RuntimeSHA, Endpoint: "http://" + address + "/v1", Context: m.Context, MaxContext: m.contextLimit(), Instance: instanceKey(m)}
+	status := Status{Engine: m.Engine, Version: Version, Model: m.Model, Revision: m.Revision, Runtime: m.RuntimeSHA, Endpoint: instanceEndpoint(host, port), Context: m.Context, MaxContext: m.contextLimit(), Instance: instanceKey(m)}
 	var mu sync.Mutex
 	socket := filepath.Join(p.State, "control.sock")
 	os.Remove(socket)
@@ -284,7 +297,7 @@ func serve(parent context.Context, p Paths, m Manifest, override string, port in
 	if e != nil {
 		return e
 	}
-	executable, args, extra := launchCommand(p, m, runtimeDir, model, port)
+	executable, args, extra := launchCommand(p, m, runtimeDir, model, host, port)
 	self, e := os.Executable()
 	if e != nil {
 		return e
@@ -324,7 +337,9 @@ func serve(parent context.Context, p Paths, m Manifest, override string, port in
 	probeCtx, stopProbe := context.WithTimeout(ctx, 10*time.Minute)
 	defer stopProbe()
 	ready := make(chan error, 1)
-	go func() { ready <- probe(probeCtx, "http://"+address, key, m.Model, loading.phase) }()
+	go func() {
+		ready <- probe(probeCtx, fmt.Sprintf("http://%s:%d", endpointHost(host), port), key, m.Model, loading.phase)
+	}()
 	select {
 	case e = <-done:
 		loading.fail()

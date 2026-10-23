@@ -51,8 +51,36 @@ class DefaultsTests(unittest.TestCase):
                     main()
                     self.assertEqual(make.call_args.kwargs["grammar_mode"], grammar)
                     self.assertEqual(construct.call_args.kwargs["enforce_tool_schemas"], enforce)
+                    self.assertEqual(make.call_args.args[1], ("127.0.0.1", 8080))
                     ready = json.loads(stdout.getvalue().splitlines()[0])
                     self.assertEqual(ready["grammar"], grammar)
                     self.assertEqual(ready["fast_sync"], fast_sync)
                     self.assertEqual(ready["enforce_tool_schemas"], enforce)
                     self.assertEqual(ready["chat_template"], "flint")
+
+    def test_serve_binds_configured_host(self):
+        engine = Mock(identity={"model_id": "flint"}, startup={"chat_template": "flint"})
+        server = Mock(server_port=8080)
+        with (
+            patch(
+                "sys.argv",
+                [
+                    "rec-mlx",
+                    "serve",
+                    "flint",
+                    "--model-dir",
+                    ".",
+                    "--manifest",
+                    "model.json",
+                    "--host",
+                    "0.0.0.0",
+                ],
+            ),
+            patch("rec_mlx.cli.Engine", return_value=engine),
+            patch("rec_mlx.server.make_server", return_value=server) as make,
+            patch("rec_mlx.cli.signal.signal"),
+            redirect_stdout(io.StringIO()) as stdout,
+        ):
+            main()
+            self.assertEqual(make.call_args.args[1], ("0.0.0.0", 8080))
+            self.assertIn("Listening on http://0.0.0.0:8080/v1", stdout.getvalue())

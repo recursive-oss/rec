@@ -53,32 +53,32 @@ func TestExistingInstanceUsesEffectiveProfile(t *testing.T) {
 	m := Manifest{Model: "flint", Revision: "test", RuntimeSHA: "runtime", Context: 4096}
 	s := Status{Ready: true, Model: m.Model, Revision: m.Revision, Runtime: m.RuntimeSHA,
 		Context: m.Context, Instance: instanceKey(m), Endpoint: "http://127.0.0.1:11500/v1"}
-	if !sameInstance(s, m, 11500) {
+	if !sameInstance(s, m, "127.0.0.1", 11500) {
 		t.Fatal("identical instance rejected")
 	}
 	explicit, _ := withContext(m, 4096)
-	if !sameInstance(s, explicit, 11500) {
+	if !sameInstance(s, explicit, "127.0.0.1", 11500) {
 		t.Fatal("explicit default rejected")
 	}
 	changed := m
 	changed.Context = 16384
-	if sameInstance(s, changed, 11500) {
+	if sameInstance(s, changed, "127.0.0.1", 11500) {
 		t.Fatal("reused a smaller context")
 	}
 	changed = m
 	changed.MinRAM++
-	if sameInstance(s, changed, 11500) {
+	if sameInstance(s, changed, "127.0.0.1", 11500) {
 		t.Fatal("reused different serving settings")
 	}
 	s.Instance = ""
-	if sameInstance(s, m, 11500) {
+	if sameInstance(s, m, "127.0.0.1", 11500) {
 		t.Fatal("legacy server without profile must restart")
 	}
 }
 
 func TestContextReachesEngine(t *testing.T) {
 	m := releaseManifest(t)
-	_, args, _ := launchCommand(Paths{}, m, "/runtime", "/model/flint-int4.json", 11500)
+	_, args, _ := launchCommand(Paths{}, m, "/runtime", "/model/flint-int4.json", "127.0.0.1", 11500)
 	found := false
 	for i, arg := range args {
 		if arg == "--context-limit" && i+1 < len(args) {

@@ -93,9 +93,11 @@ func run(args []string) error {
 	runtimeDir := flags.String("runtime-dir", "", "")
 	var contextTokens int
 	port := 11500
+	host := "127.0.0.1"
 	if command == "serve" {
 		flags.IntVar(&contextTokens, "context", 0, "")
 		flags.IntVar(&port, "port", port, "")
+		flags.StringVar(&host, "host", host, "")
 	}
 	flags.SetOutput(io.Discard)
 	if e := flags.Parse(rest); e != nil {
@@ -139,7 +141,7 @@ func run(args []string) error {
 		}
 		return e
 	}
-	return serve(ctx, p, m, *runtimeDir, port, os.Stderr, background)
+	return serve(ctx, p, m, *runtimeDir, host, port, os.Stderr, background)
 }
 
 func doctor(p Paths, m Manifest, manifestErr error) error {
