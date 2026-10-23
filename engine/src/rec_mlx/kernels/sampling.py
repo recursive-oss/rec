@@ -14,7 +14,14 @@ def sampling_packet(keys, configuration):
     return mx.concatenate([configuration, noise.reshape(-1)])
 
 
+def project(traces, direction):
+    # Each step's trace holds the residual after the embedding and after every layer.
+    return (traces.astype(mx.float32) @ direction).tolist()
+
+
 class ResidentSampler:
+    probe = None
+
     def __init__(self, module, engine, specification):
         self.module, self.engine = module, engine
         assert engine.workers == engine.device_profile.workers
@@ -72,6 +79,7 @@ if(stop)break;
         presence_penalty=0.0,
         grammar=None,
         logprobs=None,
+        probe_rows=None,
     ):
         module, engine = self.module, self.engine
         if not 1 <= count <= WIDTH:
@@ -84,6 +92,8 @@ if(stop)break;
             or (temperature != 0 and (temperature, top_p, top_k) != (1.0, 1.0, 0))
         ):
             options = {} if logprobs is None else {"logprobs": logprobs}
+            if probe_rows is not None:
+                options["probe_rows"], options["probe"] = probe_rows, self.probe
             return self.filtered.block(
                 state,
                 token,
@@ -165,6 +175,8 @@ if(stop)break;
         assert 1 <= produced <= count
         pairs = packet[: 2 * produced]
         assert pairs[0] == int(token) and pairs[2::2] == pairs[1:-1:2], "Invalid sampled chain"
+        if probe_rows is not None:
+            probe_rows.extend(project(out[1][:produced], self.probe))
         state["position"] += produced
         return pairs[1::2]
 

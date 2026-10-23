@@ -1,5 +1,8 @@
-def build_decoder(model, *, optimized):
+def build_decoder(model, *, optimized, steering=None):
     import mlx.core as mx
+
+    if steering is not None and not optimized:
+        raise ValueError("Steering requires the optimized resident decoder")
 
     # One engine per process: the transforms specialize the module's Metal factory.
     from rec_mlx.kernels import megakernel
@@ -17,13 +20,21 @@ def build_decoder(model, *, optimized):
         megakernel._HEADER = transform(megakernel._HEADER)
         from rec_mlx.kernels.mixed_bits import transform as qat_transform
 
-        captures = install(
-            megakernel,
-            profile,
-            post_transform=lambda h, b: qat_transform(
-                h, b, model, profile.mlp_workers, profile.specialize_mixed_experts
-            ),
-        )
+        def post_transform(header, body):
+            header, body = qat_transform(
+                header, body, model, profile.mlp_workers, profile.specialize_mixed_experts
+            )
+            if steering is not None:
+                from rec_mlx.kernels.steering import transform as steer
+
+                header, body = steer(header, body, steering)
+            return header, body
+
+        captures = install(megakernel, profile, post_transform=post_transform)
+        if steering is not None:
+            from rec_mlx.steering import attach
+
+            attach(model.native, steering)
     if not optimized:
         from rec_mlx.kernels.mixed_bits import install as install_qat
 
