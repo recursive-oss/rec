@@ -14,7 +14,8 @@ class BandedSlidingTests(unittest.TestCase):
     def test_matches_full_window_mask_bit_for_bit(self):
         mx.random.seed(0)
         sinks = mx.random.normal((32,)).astype(mx.bfloat16)
-        for prior, length in ((0, 2048), (100, 1000), (WINDOW, 2048), (WINDOW, 300), (WINDOW, 4096), (0, 2053), (WINDOW, 2048 + 100), (WINDOW - 1, 2049), (0, 5), (100, 777)):
+        for prior, length in ((0, 2048), (100, 1000), (WINDOW, 2048), (WINDOW, 300), (WINDOW, 4096), (0, 2053), (WINDOW, 2048 + 100), (WINDOW - 1, 2049), (0, 5), (100, 777),
+            *[(prior, length) for prior in (0, 100, WINDOW) for length in (2, 8, 9, 257, 260, 264, 265)]):
             with self.subTest(prior=prior, length=length):
                 q = mx.random.normal((1, 32, length, 128)).astype(mx.bfloat16)
                 k = mx.random.normal((1, 4, prior + length, 128)).astype(mx.bfloat16)
