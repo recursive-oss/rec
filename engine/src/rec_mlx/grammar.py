@@ -76,11 +76,16 @@ class ConstraintSession:
             return self.full_mask
         return self._fill()
 
-    def first_logits(self, logits):
+    def _mask_logits(self, logits, bits):
         words = mx.arange(VOCAB, dtype=mx.uint32)
-        bits = self.initial_mask
         allowed = ((bits[words >> 5] >> (words & 31)) & 1) != 0
         return mx.where(allowed, logits, -float("inf"))
+
+    def first_logits(self, logits):
+        return self._mask_logits(logits, self.initial_mask)
+
+    def step_logits(self, logits, state):
+        return self._mask_logits(logits, state.get("grammar_mask", self.initial_mask))
 
     def accept_first(self, token, state):
         mask = self._advance(token, True)
