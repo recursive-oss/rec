@@ -141,8 +141,12 @@ def quantized_attention_with_sinks(
 
 
 # Key tile starts must stay on a multiple of this so each block reuses the full kernel's tile grid.
+# mlx 0.32.0 scaled_dot_product_attention.cpp: key tile bk is 16 for head_dim 128 on non-NAX GPUs (line 199)
+# and 32 on NAX GPUs (line 36); query tile bq is 32 / 64 (lines 198, 35). 64 and 256 are multiples of all four.
 BAND_ALIGN = 64
 BAND_QUERIES = 256
+# Queries <= 8 use sdpa_vector instead of the full kernel (use_fallback, lines 635-637).
+SDPA_VECTOR_MAX_QUERIES = 8
 
 
 def banded_sliding_attention(q, k, v, scale, sinks, prior, window):
@@ -152,6 +156,16 @@ def banded_sliding_attention(q, k, v, scale, sinks, prior, window):
     them is bit-identical to the single call with the full window mask.
     """
     L = q.shape[2]
+    if L <= SDPA_VECTOR_MAX_QUERIES or 0 < L % BAND_QUERIES <= SDPA_VECTOR_MAX_QUERIES:
+        # A tail block this short would take MLX's sdpa_vector kernel, a different accumulation order.
+        return mx.fast.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            scale=scale,
+            mask=create_causal_mask(L, offset=prior, window_size=window),
+            sinks=sinks,
+        )
     outs = []
     for s in range(0, L, BAND_QUERIES):
         n = min(BAND_QUERIES, L - s)
