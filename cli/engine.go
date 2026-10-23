@@ -6,11 +6,12 @@ import (
 	"strconv"
 )
 
-func launchCommand(p Paths, m Manifest, runtimeDir, model string, port int) (string, []string, []string) {
+func launchCommand(p Paths, m Manifest, runtimeDir, model string, host string, port int) (string, []string, []string) {
 	return filepath.Join(runtimeDir, runtimeServer), []string{
 		"serve", m.Model, "--model-dir", filepath.Dir(model), "--manifest", model,
 		"--port", strconv.Itoa(port), "--context-limit", strconv.Itoa(m.Context),
 		"--api-key-file", filepath.Join(p.Config, "api-key"),
+		"--host", host,
 	}, []string{"HF_HUB_OFFLINE=1", "TOKENIZERS_PARALLELISM=false"}
 }
 

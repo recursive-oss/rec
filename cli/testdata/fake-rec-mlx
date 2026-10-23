@@ -12,6 +12,7 @@ for flag in ("--model-dir", "--manifest", "--api-key-file"):
     parser.add_argument(flag, type=Path, required=True)
 parser.add_argument("--port", type=int, required=True)
 parser.add_argument("--context-limit", type=int, required=True)
+parser.add_argument("--host", default="127.0.0.1")
 args = parser.parse_args()
 assert (args.model_dir / args.manifest.name).is_file()
 key = args.api_key_file.read_text().strip()
@@ -46,4 +47,4 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.reply({"choices": [{"index": 0, "message": message, "finish_reason": "stop"}]})
 
 
-http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
+http.server.ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
