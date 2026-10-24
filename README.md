@@ -26,6 +26,11 @@ excluded.</sub></p>
 
 ## Requirements
 
+An [experimental Linux/ROCm backend](engine/rocm/README.md) is available for development
+on a 32 GB Radeon AI PRO R9700. It requires a separate pinned environment and manual
+build; the installer below continues to target the Apple runtime. See its documented
+performance and support limitations before using it.
+
 - Apple Silicon Mac with an M4 Pro, M5 Pro, or M5 Max
 - At least 48 GB unified memory
 - About 30 GB free disk space

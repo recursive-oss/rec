@@ -13,6 +13,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", default="rec", help="rec executable (default: %(default)s)")
     parser.add_argument("--report", type=Path, help="JSON file for the results")
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=180,
+        help="HTTP timeout in seconds (increase for shared GPUs)",
+    )
+    parser.add_argument(
+        "--generation-tokens",
+        type=int,
+        default=2048,
+        help="Long generation budget including reasoning",
+    )
     args = parser.parse_args()
     status = json.loads(subprocess.check_output([args.binary, "status"], text=True))
     assert status["ready"] and status["model"] == "flint", status
@@ -25,7 +37,7 @@ def main():
             headers["Authorization"] = "Bearer " + key
         body = json.dumps(payload).encode() if payload is not None else None
         req = urllib.request.Request(status["endpoint"] + path, data=body, headers=headers)
-        return opener.open(req, timeout=180)
+        return opener.open(req, timeout=args.timeout)
 
     def chat(messages, **extra):
         payload = dict(
@@ -99,7 +111,7 @@ def main():
 
     generation = chat(
         [{"role": "user", "content": "Explain how hash tables work in about 200 words."}],
-        max_tokens=2048,
+        max_tokens=args.generation_tokens,
     )
     assert generation["choices"][0]["message"]["content"], generation
     assert generation["choices"][0]["finish_reason"] == "stop", generation
@@ -123,7 +135,16 @@ def main():
         " passed"
     )
     if report["timings"]:
-        print(json.dumps(report["timings"], indent=2))
+        print(
+            json.dumps(
+                {
+                    k: v
+                    for k, v in report["timings"].items()
+                    if k not in ("token_ids", "token_times")
+                },
+                indent=2,
+            )
+        )
 
 
 if __name__ == "__main__":

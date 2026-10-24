@@ -7,7 +7,7 @@ import (
 )
 
 func launchCommand(p Paths, m Manifest, runtimeDir, model string, port int) (string, []string, []string) {
-	return filepath.Join(runtimeDir, runtimeServer), []string{
+	return filepath.Join(runtimeDir, runtimeServerFor(m)), []string{
 		"serve", m.Model, "--model-dir", filepath.Dir(model), "--manifest", model,
 		"--port", strconv.Itoa(port), "--context-limit", strconv.Itoa(m.Context),
 		"--api-key-file", filepath.Join(p.Config, "api-key"),

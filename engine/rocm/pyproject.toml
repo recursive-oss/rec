@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rec-rocm"
+version = "0.1.0"
+description = "Flint affine INT4 inference on the qualified AMD ROCm 10.1 platform"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "torch==2.14.0+rocm10.1.0",
+    "triton==3.8.0+git669b31ac.rocm10.1.0",
+    "transformers==5.16.1",
+    "tokenizers==0.23.3",
+    "safetensors==0.8.0",
+    "xgrammar==0.2.1",
+]
+
+[project.scripts]
+rec-rocm = "rec_rocm.cli:main"
+
+[project.optional-dependencies]
+validation = ["pytest==9.1.1", "numpy==2.5.4"]
+
+[tool.setuptools]
+package-dir = {"" = "../src"}
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["../src"]
+include = ["rec_rocm*", "rec_mlx", "rec_mlx.kernels"]
+
+[tool.setuptools.package-data]
+rec_mlx = ["chat_template.jinja"]

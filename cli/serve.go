@@ -262,10 +262,10 @@ func serve(parent context.Context, p Paths, m Manifest, override string, port in
 	go func() { _ = srv.Serve(listener) }()
 	ui := newScreen(out)
 	if e = preflight(m); e != nil {
-		ui.failed("This Mac is not supported", "")
+		ui.failed(platformDescription(m)+" is not supported", "")
 		return e
 	}
-	ui.succeeded("This Mac is supported", "")
+	ui.succeeded(platformDescription(m)+" is supported", "")
 	runtimeProgress := startActivity(out, "Preparing runtime", "Runtime ready")
 	runtimeDir, e := ensureRuntime(p, m, override)
 	if e != nil {

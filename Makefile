@@ -1,4 +1,4 @@
-.PHONY: test test-cli test-engine
+.PHONY: test test-cli test-engine test-rocm
 
 # The OpenCode client is built for Apple Silicon only.
 ifeq ($(shell uname -sm),Darwin arm64)
@@ -19,6 +19,10 @@ test-cli:
 	python3 tests/launch_client_test.py .build/rec $(CLIENTS)
 	python3 tests/installer_test.py
 	python3 tests/package_test.py
+	python3 tests/rocm_package_test.py
+
+test-rocm:
+	PYTHONPATH="$(CURDIR)/engine/src$${PYTHONPATH:+:$$PYTHONPATH}" python3 -m pytest engine/tests_rocm -q
 
 PYTHON_ROOT = $(shell uv python dir)/cpython-3.12.12-macos-aarch64-none
 
