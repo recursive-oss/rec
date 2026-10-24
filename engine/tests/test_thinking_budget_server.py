@@ -7,9 +7,8 @@ import threading
 import unittest
 from pathlib import Path
 
-from test_serving import Engine as BaseEngine
-
 from rec_mlx.server import make_server
+from test_serving import Engine as BaseEngine
 
 THINK_ID = 7
 BUDGET = 3

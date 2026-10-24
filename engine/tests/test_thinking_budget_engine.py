@@ -7,7 +7,6 @@ from types import SimpleNamespace
 
 import mlx.core as mx
 import pytest
-from test_thinking_budget import CLOSE_ID, THINK_ID, DedicatedTokenizer
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers
 from transformers import PreTrainedTokenizerFast
 
@@ -16,6 +15,7 @@ from rec_mlx.engine import Engine, Sampling
 from rec_mlx.grammar import ConstraintCompiler
 from rec_mlx.grammar_builder import _PROTOCOL_MARKERS
 from rec_mlx.kernels.sampling import WIDTH, ResidentSampler
+from test_thinking_budget import CLOSE_ID, THINK_ID, DedicatedTokenizer
 
 VOCAB = 16
 EOS = 0
