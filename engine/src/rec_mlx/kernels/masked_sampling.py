@@ -1,7 +1,35 @@
 from functools import partial
 
 import mlx.core as mx
-from mlx_lm.sample_utils import make_sampler
+from mlx_lm.sample_utils import categorical_sampling, make_sampler
+
+
+def top_p_top_k(logprobs, top_p, top_k):
+    """apply_top_k(apply_top_p(logprobs)) with one sort.
+
+    apply_top_k is an argpartition (a full stable sort in MLX) of the top_p-masked values.
+    The k-th largest value comes from the top_p sort instead; ties at that value keep the
+    lowest indices, as argpartition does.
+    """
+    order = mx.argsort(logprobs, axis=-1)
+    cumulative = mx.cumsum(mx.take_along_axis(mx.exp(logprobs), order, axis=-1))
+    inverse = mx.put_along_axis(
+        mx.zeros_like(order), order, mx.arange(order.shape[-1], dtype=order.dtype), axis=-1
+    )
+    cumulative = mx.take_along_axis(cumulative, inverse, axis=-1)
+    masked = mx.where(cumulative > 1 - top_p, logprobs, -float("inf"))
+    kth = logprobs[order[-top_k]]
+    greater, tied = masked > kth, masked == kth
+    slots = top_k - mx.sum(greater)
+    keep = greater | (tied & (mx.cumsum(tied.astype(mx.int32)) <= slots))
+    return mx.where(keep, masked, -float("inf"))
+
+
+def make_resident_sampler(temp, top_p, top_k):
+    """make_sampler with top_p and top_k sharing one sort: the same tokens for the same key."""
+    if temp == 0 or not 0 < top_p < 1 or not 0 < top_k < 150144:
+        return make_sampler(temp=temp, top_p=top_p, top_k=top_k)
+    return lambda logprobs: categorical_sampling(top_p_top_k(logprobs, top_p, top_k), temp)
 
 
 class FilteredResidentSampler:
@@ -47,7 +75,7 @@ if(!active) {{
             stops,
             return_logprobs,
         ):
-            sample = make_sampler(temp=temperature, top_p=top_p, top_k=top_k)
+            sample = make_resident_sampler(temperature, top_p, top_k)
             active = mx.array(True)
             # Compile-time CSE must not merge independently mutated semaphore buffers.
             controls = mx.zeros((count, 1024), mx.uint32)
