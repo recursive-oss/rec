@@ -22,6 +22,11 @@ class RequestError(ValueError):
     pass
 
 
+class Server(ThreadingHTTPServer):
+    # The default backlog of 5 resets a burst of connections before the accept loop takes them.
+    request_queue_size = 32
+
+
 def make_server(
     engine, address, metrics_path, *, defaults=Sampling(), api_key=None, grammar_mode="flint"
 ):
@@ -335,7 +340,7 @@ def make_server(
                 if request.generation_context is not None:
                     request.generation_context.stop()
 
-    server = ThreadingHTTPServer(address, Handler)
+    server = Server(address, Handler)
     generator = Generator(engine, metrics_path, defaults)
     server.generator = generator
     return server
