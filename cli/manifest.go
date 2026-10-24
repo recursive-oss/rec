@@ -69,6 +69,13 @@ func safeRuntimeName(s string) bool {
 
 const runtimeServer = "rec-mlx"
 
+func runtimeServerFor(m Manifest) string {
+	if m.Engine == "rocm" {
+		return "rec-rocm"
+	}
+	return runtimeServer
+}
+
 func decodeManifest(data []byte) (Manifest, error) {
 	var m Manifest
 	d := json.NewDecoder(bytes.NewReader(data))
@@ -81,8 +88,10 @@ func decodeManifest(data []byte) (Manifest, error) {
 		return m, fmt.Errorf("trailing manifest data")
 	}
 	// Each engine is one target. Adding an engine adds its own case here.
-	if m.Engine != "mlx" || m.OS != "darwin" || m.Arch != "arm64" || m.Backend != "metal" {
-		return m, fmt.Errorf("unsupported engine or target: rec runs the MLX engine on Apple Silicon")
+	mlxTarget := m.Engine == "mlx" && m.OS == "darwin" && m.Arch == "arm64" && m.Backend == "metal"
+	rocmTarget := m.Engine == "rocm" && m.OS == "linux" && m.Arch == "amd64" && m.Backend == "hip"
+	if !mlxTarget && !rocmTarget {
+		return m, fmt.Errorf("unsupported engine or target: expected MLX/Metal or Linux AMD ROCm/HIP")
 	}
 	if m.MaxContext < 0 || (m.MaxContext > 0 && m.Context > m.MaxContext) {
 		return m, fmt.Errorf("invalid maximum context")
@@ -124,12 +133,12 @@ func decodeManifest(data []byte) (Manifest, error) {
 	}
 	server := false
 	for _, f := range m.RuntimeFiles {
-		if f.Name == runtimeServer && f.Executable {
+		if f.Name == runtimeServerFor(m) && f.Executable {
 			server = true
 		}
 	}
 	if !server {
-		return m, fmt.Errorf("runtime requires executable %s", runtimeServer)
+		return m, fmt.Errorf("runtime requires executable %s", runtimeServerFor(m))
 	}
 	return m, nil
 }

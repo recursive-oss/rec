@@ -1,4 +1,6 @@
 .build/
 dist/
 __pycache__/
+*.egg-info/
+engine/rocm/build/
 cli/clients/pi/node_modules/
