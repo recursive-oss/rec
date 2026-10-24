@@ -23,6 +23,7 @@ class BandedSlidingTests(unittest.TestCase):
             (0, 2053),
             (WINDOW, 2048 + 100),
             (WINDOW - 1, 2049),
+            (511, 2048),  # first visible key at 63 mod 64: catches an off-by-one band start
             (0, 5),
             (100, 777),
             *[(WINDOW, length) for length in range(2050, 2057)],
@@ -40,7 +41,7 @@ class BandedSlidingTests(unittest.TestCase):
                 expected = mx.fast.scaled_dot_product_attention(
                     q, k, v, scale=128**-0.5, mask=mask, sinks=sinks
                 )
-                actual = banded_sliding_attention(q, k, v, 128**-0.5, sinks, prior, WINDOW)
+                actual = banded_sliding_attention(q, k, v, 128**-0.5, sinks, mask, WINDOW)
                 self.assertTrue(mx.array_equal(actual, expected).item())
 
     @unittest.skipUnless(mx.metal.is_available(), "requires Apple Metal")
@@ -63,7 +64,7 @@ class BandedSlidingTests(unittest.TestCase):
                 expected = mx.fast.scaled_dot_product_attention(
                     q, k, v, scale=128**-0.5, mask=mask, sinks=sinks
                 )
-                actual = banded_sliding_attention(q, k, v, 128**-0.5, sinks, prior, WINDOW)
+                actual = banded_sliding_attention(q, k, v, 128**-0.5, sinks, mask, WINDOW)
                 self.assertTrue(mx.array_equal(actual, expected).item())
 
 

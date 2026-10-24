@@ -4,7 +4,7 @@ from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
-from mlx_lm.models.base import BaseModelArgs, create_attention_mask, create_causal_mask
+from mlx_lm.models.base import BaseModelArgs, create_attention_mask
 from mlx_lm.models.cache import QuantizedKVCache, RotatingKVCache
 from mlx_lm.models.switch_layers import SwitchGLU
 
@@ -150,40 +150,33 @@ BAND_QUERIES = 256
 SDPA_VECTOR_MAX_QUERIES = 8
 
 
-def banded_sliding_attention(q, k, v, scale, sinks, prior, window):
-    """Sliding-window attention over [prior | chunk] keys, one query block at a time.
+def banded_sliding_attention(q, k, v, scale, sinks, mask, window):
+    """Sliding-window prefill over [prior | chunk] keys, BAND_QUERIES queries at a time.
 
-    Fully masked leading/trailing key tiles add exactly zero to the online softmax, so skipping
-    them is bit-identical to the single call with the full window mask.
+    Each band reads only the keys its window reaches. The skipped tiles are fully masked and add
+    exactly zero to the online softmax, so the result is bit-identical to the single call.
     """
     L = q.shape[2]
     if L <= SDPA_VECTOR_MAX_QUERIES or 0 < L % BAND_QUERIES <= SDPA_VECTOR_MAX_QUERIES:
-        # A tail block this short would leave the full kernel, a different accumulation order.
-        return mx.fast.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            scale=scale,
-            mask=create_causal_mask(L, offset=prior, window_size=window),
-            sinks=sinks,
-        )
+        # A band this short would leave the full kernel and accumulate in another order.
+        return mx.fast.scaled_dot_product_attention(q, k, v, scale=scale, mask=mask, sinks=sinks)
+    prior = k.shape[2] - L
     outs = []
     for s in range(0, L, BAND_QUERIES):
         n = min(BAND_QUERIES, L - s)
         start = max(0, prior + s - window + 1) // BAND_ALIGN * BAND_ALIGN
         stop = prior + s + n
-        mask = create_causal_mask(n, offset=prior + s - start, window_size=window)
         outs.append(
             mx.fast.scaled_dot_product_attention(
                 q[:, :, s : s + n],
                 k[:, :, start:stop],
                 v[:, :, start:stop],
                 scale=scale,
-                mask=mask,
+                mask=mask[s : s + n, start:stop],
                 sinks=sinks,
             )
         )
-    return outs[0] if len(outs) == 1 else mx.concatenate(outs, axis=2)
+    return mx.concatenate(outs, axis=2)
 
 
 class Attention(nn.Module):
@@ -221,12 +214,11 @@ class Attention(nn.Module):
         if self.use_rope:
             offset = cache.offset if cache is not None else 0
             q, k = self.rope(q, offset=offset), self.rope(k, offset=offset)
-        prior = cache._valid if isinstance(cache, FixedSlidingKVCache) else 0
         if cache is not None:
             k, v = cache.update_and_fetch(k, v)
         if isinstance(cache, FixedSlidingKVCache) and L > 1 and isinstance(mask, mx.array):
             out = banded_sliding_attention(
-                q, k, v, self.scale, self.softmax_offset.astype(q.dtype), prior, cache.window_size
+                q, k, v, self.scale, self.softmax_offset.astype(q.dtype), mask, cache.window_size
             )
         elif isinstance(cache, MixedQuantizedKVCache) and L == 1:
             out = quantized_attention_with_sinks(
