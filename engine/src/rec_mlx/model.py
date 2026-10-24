@@ -145,7 +145,8 @@ def quantized_attention_with_sinks(
 # and 32 on NAX GPUs (line 36); query tile bq is 32 / 64 (lines 198, 35). 64 and 256 are multiples of all four.
 BAND_ALIGN = 64
 BAND_QUERIES = 256
-# Queries <= 8 use sdpa_vector instead of the full kernel (use_fallback, lines 635-637).
+# Queries <= 8 never reach the full kernel: MLX uses sdpa_vector when queries x GQA factor <= 32 and the
+# unfused fallback otherwise (use_fallback, lines 632-640).
 SDPA_VECTOR_MAX_QUERIES = 8
 
 
@@ -157,7 +158,7 @@ def banded_sliding_attention(q, k, v, scale, sinks, prior, window):
     """
     L = q.shape[2]
     if L <= SDPA_VECTOR_MAX_QUERIES or 0 < L % BAND_QUERIES <= SDPA_VECTOR_MAX_QUERIES:
-        # A tail block this short would take MLX's sdpa_vector kernel, a different accumulation order.
+        # A tail block this short would leave the full kernel, a different accumulation order.
         return mx.fast.scaled_dot_product_attention(
             q,
             k,
