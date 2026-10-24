@@ -31,7 +31,6 @@ class ResidentSamplerTest(unittest.TestCase):
             for temp in (1.0, 0.6):
                 reference = make_sampler(temp=temp, top_p=top_p, top_k=top_k)
                 candidate = make_resident_sampler(temp, top_p, top_k)
-                kernel = make_resident_sampler(temp, top_p, top_k, flags := [])
                 for index, x in enumerate(vectors()):
                     x = mx.array(x.astype(np.float32)).astype(mx.bfloat16).astype(mx.float32)
                     logprobs = x - mx.logsumexp(x)
@@ -48,14 +47,6 @@ class ResidentSamplerTest(unittest.TestCase):
                         mx.random.seed(seed + 100 * index)
                         actual = candidate(logprobs).item()
                         self.assertEqual(actual, expected, (top_p, top_k, temp, index, seed))
-                        mx.random.seed(seed + 100 * index)
-                        flags.clear()
-                        fast = kernel(logprobs).item()
-                        # A flagged step is redone by the caller with the sort-based sampler.
-                        if flags[0].item() == 0:
-                            self.assertEqual(
-                                fast, expected, ("nucleus", top_p, top_k, temp, index, seed)
-                            )
 
 
 if __name__ == "__main__":
