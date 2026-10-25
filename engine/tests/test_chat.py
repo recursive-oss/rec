@@ -185,6 +185,7 @@ class ToolCallParsingTests(unittest.TestCase):
                 "top_p": 0.95,
                 "top_k": 20,
                 "presence_penalty": 0.0,
+                "repetition_penalty": 1.0,
                 "max_tokens": 16,
                 "seed": 42,
             }
@@ -206,6 +207,7 @@ class ToolCallParsingTests(unittest.TestCase):
             ("top_p", 0.5),
             ("top_k", 4),
             ("presence_penalty", 1.5),
+            ("repetition_penalty", 1.2),
             ("max_tokens", 8),
         ):
             with self.subTest(name=name):

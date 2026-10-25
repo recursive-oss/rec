@@ -21,16 +21,19 @@ import (
 )
 
 type Status struct {
-	Engine     string `json:"engine"`
-	Ready      bool   `json:"ready"`
-	Version    string `json:"version"`
-	Model      string `json:"model"`
-	Revision   string `json:"revision"`
-	Runtime    string `json:"runtime_sha256"`
-	Endpoint   string `json:"endpoint"`
-	Context    int    `json:"context"`
-	MaxContext int    `json:"max_context"`
-	Instance   string `json:"instance_sha256"`
+	Engine          string   `json:"engine"`
+	Ready           bool     `json:"ready"`
+	Version         string   `json:"version"`
+	Model           string   `json:"model"`
+	Revision        string   `json:"revision"`
+	Runtime         string   `json:"runtime_sha256"`
+	Endpoint        string   `json:"endpoint"`
+	Context         int      `json:"context"`
+	MaxContext      int      `json:"max_context"`
+	Instance        string   `json:"instance_sha256"`
+	Temperature     *float64 `json:"temperature,omitempty"`
+	PresencePenalty *float64 `json:"presence_penalty,omitempty"`
+	RepeatPenalty   *float64 `json:"repeat_penalty,omitempty"`
 }
 
 func instanceKey(m Manifest) string {
@@ -52,10 +55,35 @@ func instanceEndpoint(host string, port int) string {
 	return fmt.Sprintf("http://%s:%d/v1", endpointHost(host), port)
 }
 
-func sameInstance(s Status, m Manifest, host string, port int) bool {
-	return s.Ready && s.Model == m.Model && s.Runtime == m.RuntimeSHA &&
+func sameInstance(s Status, m Manifest, host string, port int, params ...*float64) bool {
+	matches := s.Ready && s.Model == m.Model && s.Runtime == m.RuntimeSHA &&
 		s.Revision == m.Revision && s.Context == m.Context &&
 		s.Instance == instanceKey(m) && s.Endpoint == instanceEndpoint(host, port)
+	if !matches {
+		return false
+	}
+	var temp *float64
+	var presence *float64
+	var repeat *float64
+	if len(params) > 0 {
+		temp = params[0]
+	}
+	if len(params) > 1 {
+		presence = params[1]
+	}
+	if len(params) > 2 {
+		repeat = params[2]
+	}
+	if temp != nil && (s.Temperature == nil || *s.Temperature != *temp) {
+		return false
+	}
+	if presence != nil && (s.PresencePenalty == nil || *s.PresencePenalty != *presence) {
+		return false
+	}
+	if repeat != nil && (s.RepeatPenalty == nil || *s.RepeatPenalty != *repeat) {
+		return false
+	}
+	return true
 }
 
 func control(p Paths, action string) (Status, error) {
@@ -223,11 +251,11 @@ func probe(ctx context.Context, base, key, model string, phase ...func(string)) 
 	return nil
 }
 
-func serve(parent context.Context, p Paths, m Manifest, override string, host string, port int, out io.Writer, background ...bool) error {
+func serve(parent context.Context, p Paths, m Manifest, override string, host string, port int, temp *float64, presence *float64, repeat *float64, out io.Writer, background ...bool) error {
 	l, e := lock(filepath.Join(p.State, "instance.lock"))
 	if e != nil {
 		if s, err := control(p, "status"); err == nil {
-			if sameInstance(s, m, host, port) {
+			if sameInstance(s, m, host, port, temp, presence, repeat) {
 				newScreen(out).succeeded(m.Model+" is already running", s.Endpoint)
 				return nil
 			}
@@ -244,7 +272,20 @@ func serve(parent context.Context, p Paths, m Manifest, override string, host st
 		return fmt.Errorf("port %d is unavailable; use --port with a free port", port)
 	}
 	check.Close()
-	status := Status{Engine: m.Engine, Version: Version, Model: m.Model, Revision: m.Revision, Runtime: m.RuntimeSHA, Endpoint: instanceEndpoint(host, port), Context: m.Context, MaxContext: m.contextLimit(), Instance: instanceKey(m)}
+	status := Status{
+		Engine:          m.Engine,
+		Version:         Version,
+		Model:           m.Model,
+		Revision:        m.Revision,
+		Runtime:         m.RuntimeSHA,
+		Endpoint:        instanceEndpoint(host, port),
+		Context:         m.Context,
+		MaxContext:      m.contextLimit(),
+		Instance:        instanceKey(m),
+		Temperature:     temp,
+		PresencePenalty: presence,
+		RepeatPenalty:   repeat,
+	}
 	var mu sync.Mutex
 	socket := filepath.Join(p.State, "control.sock")
 	os.Remove(socket)
@@ -297,7 +338,7 @@ func serve(parent context.Context, p Paths, m Manifest, override string, host st
 	if e != nil {
 		return e
 	}
-	executable, args, extra := launchCommand(p, m, runtimeDir, model, host, port)
+	executable, args, extra := launchCommand(p, m, runtimeDir, model, host, port, temp, presence, repeat)
 	self, e := os.Executable()
 	if e != nil {
 		return e
@@ -365,7 +406,7 @@ func serve(parent context.Context, p Paths, m Manifest, override string, host st
 	mu.Lock()
 	status.Ready = true
 	mu.Unlock()
-	printReady(ui, m, status.Endpoint, len(background) > 0 && background[0])
+	printReady(ui, m, status, len(background) > 0 && background[0])
 	select {
 	case <-ctx.Done():
 		return nil
@@ -375,15 +416,25 @@ func serve(parent context.Context, p Paths, m Manifest, override string, host st
 	}
 }
 
-func printReady(ui *screen, m Manifest, endpoint string, background bool) {
+func printReady(ui *screen, m Manifest, s Status, background bool) {
 	var rows strings.Builder
-	for i, row := range [][2]string{
-		{"Base URL", endpoint},
+	rowItems := [][2]string{
+		{"Base URL", s.Endpoint},
 		{"Model", m.Model},
 		{"Checkpoint", m.Revision},
 		{"Context", m.contextSummary()},
-		{"API key", accentStyle.Render("rec auth token")},
-	} {
+	}
+	if s.Temperature != nil {
+		rowItems = append(rowItems, [2]string{"Temperature", fmt.Sprintf("%g", *s.Temperature)})
+	}
+	if s.PresencePenalty != nil {
+		rowItems = append(rowItems, [2]string{"Presence", fmt.Sprintf("%g", *s.PresencePenalty)})
+	}
+	if s.RepeatPenalty != nil {
+		rowItems = append(rowItems, [2]string{"Repeat penalty", fmt.Sprintf("%g", *s.RepeatPenalty)})
+	}
+	rowItems = append(rowItems, [2]string{"API key", accentStyle.Render("rec auth token")})
+	for i, row := range rowItems {
 		if i > 0 {
 			rows.WriteString("\n")
 		}

@@ -15,16 +15,132 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 )
 
-func launch(p Paths, args []string) error {
-	printOnly := len(args) > 0 && args[0] == "--args"
-	if printOnly {
-		args = args[1:]
+func parseLaunchArgs(args []string) (printOnly bool, quant string, manifest string, temp *float64, presence *float64, repeat *float64, harness string, rest []string, err error) {
+	quant = QuantInt4
+	beforeDash := args
+	afterDash := []string{}
+	for i, a := range args {
+		if a == "--" {
+			beforeDash = args[:i]
+			afterDash = args[i+1:]
+			break
+		}
 	}
+	var positional []string
+	for i := 0; i < len(beforeDash); i++ {
+		arg := beforeDash[i]
+		switch {
+		case arg == "--args":
+			printOnly = true
+		case arg == "--quant":
+			if i+1 >= len(beforeDash) {
+				return false, "", "", nil, nil, nil, "", nil, fmt.Errorf("flag needs an argument: --quant")
+			}
+			i++
+			quant = beforeDash[i]
+		case strings.HasPrefix(arg, "--quant="):
+			quant = strings.TrimPrefix(arg, "--quant=")
+		case arg == "--manifest":
+			if i+1 >= len(beforeDash) {
+				return false, "", "", nil, nil, nil, "", nil, fmt.Errorf("flag needs an argument: --manifest")
+			}
+			i++
+			manifest = beforeDash[i]
+		case strings.HasPrefix(arg, "--manifest="):
+			manifest = strings.TrimPrefix(arg, "--manifest=")
+		case arg == "--temperature":
+			if i+1 >= len(beforeDash) {
+				return false, "", "", nil, nil, nil, "", nil, fmt.Errorf("flag needs an argument: --temperature")
+			}
+			i++
+			val, err := strconv.ParseFloat(beforeDash[i], 64)
+			if err != nil || val < 0 || val > 2 {
+				return false, "", "", nil, nil, nil, "", nil, fmt.Errorf("temperature must be between 0 and 2")
+			}
+			temp = &val
+		case strings.HasPrefix(arg, "--temperature="):
+			valStr := strings.TrimPrefix(arg, "--temperature=")
+			val, err := strconv.ParseFloat(valStr, 64)
+			if err != nil || val < 0 || val > 2 {
+				return false, "", "", nil, nil, nil, "", nil, fmt.Errorf("temperature must be between 0 and 2")
+			}
+			temp = &val
+		case arg == "--presence-penalty":
+			if i+1 >= len(beforeDash) {
+				return false, "", "", nil, nil, nil, "", nil, fmt.Errorf("flag needs an argument: --presence-penalty")
+			}
+			i++
+			val, err := strconv.ParseFloat(beforeDash[i], 64)
+			if err != nil || val < -2 || val > 2 {
+				return false, "", "", nil, nil, nil, "", nil, fmt.Errorf("presence-penalty must be between -2 and 2")
+			}
+			presence = &val
+		case strings.HasPrefix(arg, "--presence-penalty="):
+			valStr := strings.TrimPrefix(arg, "--presence-penalty=")
+			val, err := strconv.ParseFloat(valStr, 64)
+			if err != nil || val < -2 || val > 2 {
+				return false, "", "", nil, nil, nil, "", nil, fmt.Errorf("presence-penalty must be between -2 and 2")
+			}
+			presence = &val
+		case arg == "--repeat-penalty" || arg == "--repeat_penalty" || arg == "--repetition-penalty":
+			if i+1 >= len(beforeDash) {
+				return false, "", "", nil, nil, nil, "", nil, fmt.Errorf("flag needs an argument: %s", arg)
+			}
+			i++
+			val, err := strconv.ParseFloat(beforeDash[i], 64)
+			if err != nil || val <= 0 || val > 5 {
+				return false, "", "", nil, nil, nil, "", nil, fmt.Errorf("repeat-penalty must be greater than 0 and at most 5")
+			}
+			repeat = &val
+		case strings.HasPrefix(arg, "--repeat-penalty="):
+			valStr := strings.TrimPrefix(arg, "--repeat-penalty=")
+			val, err := strconv.ParseFloat(valStr, 64)
+			if err != nil || val <= 0 || val > 5 {
+				return false, "", "", nil, nil, nil, "", nil, fmt.Errorf("repeat-penalty must be greater than 0 and at most 5")
+			}
+			repeat = &val
+		case strings.HasPrefix(arg, "--repeat_penalty="):
+			valStr := strings.TrimPrefix(arg, "--repeat_penalty=")
+			val, err := strconv.ParseFloat(valStr, 64)
+			if err != nil || val <= 0 || val > 5 {
+				return false, "", "", nil, nil, nil, "", nil, fmt.Errorf("repeat-penalty must be greater than 0 and at most 5")
+			}
+			repeat = &val
+		case strings.HasPrefix(arg, "--repetition-penalty="):
+			valStr := strings.TrimPrefix(arg, "--repetition-penalty=")
+			val, err := strconv.ParseFloat(valStr, 64)
+			if err != nil || val <= 0 || val > 5 {
+				return false, "", "", nil, nil, nil, "", nil, fmt.Errorf("repeat-penalty must be greater than 0 and at most 5")
+			}
+			repeat = &val
+		case strings.HasPrefix(arg, "-"):
+			return false, "", "", nil, nil, nil, "", nil, fmt.Errorf("flag provided but not defined: %s", arg)
+		default:
+			positional = append(positional, arg)
+		}
+	}
+	if len(positional) == 0 {
+		return false, "", "", nil, nil, nil, "", nil, fmt.Errorf("missing harness; use rec launch pi or rec launch opencode")
+	}
+	harness = positional[0]
+	rest = append(positional[1:], afterDash...)
+	quant, err = validateQuant(quant)
+	if err != nil {
+		return false, "", "", nil, nil, nil, "", nil, err
+	}
+	if harness != "opencode" && harness != "pi" {
+		return false, "", "", nil, nil, nil, "", nil, fmt.Errorf("unsupported harness %q; use rec launch pi or rec launch opencode", harness)
+	}
+	return printOnly, quant, manifest, temp, presence, repeat, harness, rest, nil
+}
+
+func launch(p Paths, args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		printUsage(os.Stdout, "launch")
 		fmt.Println("\nArguments after -- go to the harness. Reuses a running server, which keeps")
@@ -32,21 +148,22 @@ func launch(p Paths, args []string) error {
 		fmt.Println("and npm. The first launch installs the pinned harness.")
 		return nil
 	}
-	if args[0] != "opencode" && args[0] != "pi" {
-		return fmt.Errorf("unsupported harness %q; use rec launch pi or rec launch opencode", args[0])
-	}
-	rest := args[1:]
-	if len(rest) > 0 && rest[0] == "--" {
-		rest = rest[1:]
+	printOnly, quant, manifest, temp, presence, repeat, targetHarness, rest, err := parseLaunchArgs(args)
+	if err != nil {
+		return err
 	}
 	if printOnly {
-		return printHarness(p, args[0], rest)
+		return printHarness(p, targetHarness, rest)
 	}
-	if _, err := installClient(p, args[0]); err != nil {
+	if _, err := installClient(p, targetHarness); err != nil {
 		return err
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	s, err := launchReady(ctx, p, os.Stderr)
+	folder := ""
+	if m, err := loadManifest(manifest, quant); err == nil && len(m.Files) > 0 {
+		folder = modelDigest(m)
+	}
+	s, err := launchReady(ctx, p, os.Stdout, quant, manifest, folder, temp, presence, repeat)
 	cancel()
 	if err != nil {
 		return err
@@ -55,11 +172,11 @@ func launch(p Paths, args []string) error {
 	if err != nil {
 		return err
 	}
-	h, err := harnessCommand(p, args[0], s, os.Environ(), key, rest)
+	h, err := harnessCommand(p, targetHarness, s, os.Environ(), key, rest)
 	if err != nil {
 		return err
 	}
-	openingClient(map[string]string{"pi": "Pi", "opencode": "OpenCode"}[args[0]], s)
+	openingClient(map[string]string{"pi": "Pi", "opencode": "OpenCode"}[targetHarness], s, quant, folder)
 	return syscall.Exec(h.argv[0], h.argv, h.environ(os.Environ()))
 }
 
@@ -163,8 +280,12 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
-func openingClient(name string, s Status) {
-	newScreen(os.Stderr).step(accentStyle.Render("→"), "Opening "+name, fmt.Sprintf("Flint at %s, %s tokens", s.Endpoint, formatTokens(s.Context)))
+func openingClient(name string, s Status, quant, folder string) {
+	detail := fmt.Sprintf("Flint (%s) at %s, %s tokens", quant, s.Endpoint, formatTokens(s.Context))
+	if folder != "" {
+		detail = fmt.Sprintf("Flint (%s) (%s) at %s, %s tokens", quant, folder, s.Endpoint, formatTokens(s.Context))
+	}
+	newScreen(os.Stdout).step(accentStyle.Render("→"), "Opening "+name, detail)
 }
 
 func openCodeArgs(args []string) []string {
@@ -177,7 +298,7 @@ func openCodeArgs(args []string) []string {
 	return append([]string{"--standalone"}, args...)
 }
 
-func launchReady(ctx context.Context, p Paths, out io.Writer) (Status, error) {
+func launchReady(ctx context.Context, p Paths, out io.Writer, quant, manifest, folder string, temp *float64, presence *float64, repeat *float64) (Status, error) {
 	l, err := lock(filepath.Join(p.State, "launch.lock"))
 	if err != nil {
 		return Status{}, fmt.Errorf("another launcher is starting Flint; retry when it is ready")
@@ -187,7 +308,25 @@ func launchReady(ctx context.Context, p Paths, out io.Writer) (Status, error) {
 	if err == nil && s.Model != "flint" {
 		return s, fmt.Errorf("running model is %q, expected flint; use rec stop first", s.Model)
 	}
+	expectedRevision := "flint-" + quant
 	if err == nil && s.Ready {
+		if s.Revision != "" && s.Revision != expectedRevision {
+			return s, fmt.Errorf("running server uses %s, requested %s; use rec stop first", s.Revision, expectedRevision)
+		}
+		if temp != nil && s.Temperature != nil && *s.Temperature != *temp {
+			return s, fmt.Errorf("running server uses temperature %g, requested %g; use rec stop first", *s.Temperature, *temp)
+		}
+		if presence != nil && s.PresencePenalty != nil && *s.PresencePenalty != *presence {
+			return s, fmt.Errorf("running server uses presence penalty %g, requested %g; use rec stop first", *s.PresencePenalty, *presence)
+		}
+		if repeat != nil && s.RepeatPenalty != nil && *s.RepeatPenalty != *repeat {
+			return s, fmt.Errorf("running server uses repeat penalty %g, requested %g; use rec stop first", *s.RepeatPenalty, *repeat)
+		}
+		readyMsg := fmt.Sprintf("Flint (%s) is ready", quant)
+		if folder != "" {
+			readyMsg = fmt.Sprintf("Flint (%s) (%s) is ready", quant, folder)
+		}
+		newScreen(out).succeeded(readyMsg, "")
 		return s, nil
 	}
 	var child *exec.Cmd
@@ -213,7 +352,7 @@ func launchReady(ctx context.Context, p Paths, out io.Writer) (Status, error) {
 	if err != nil {
 		// Complete first-time downloads while we own the terminal, before
 		// detaching the server. Serving still verifies every file.
-		m, e := loadManifest("")
+		m, e := loadManifest(manifest, quant)
 		if e != nil {
 			return s, e
 		}
@@ -237,7 +376,23 @@ func launchReady(ctx context.Context, p Paths, out io.Writer) (Status, error) {
 		if e = log.Chmod(0600); e != nil {
 			return s, e
 		}
-		child = exec.Command(self, "_background")
+		cmdArgs := []string{"_background"}
+		if quant != QuantInt4 {
+			cmdArgs = append(cmdArgs, "--quant", quant)
+		}
+		if manifest != "" {
+			cmdArgs = append(cmdArgs, "--manifest", manifest)
+		}
+		if temp != nil {
+			cmdArgs = append(cmdArgs, "--temperature", fmt.Sprintf("%g", *temp))
+		}
+		if presence != nil {
+			cmdArgs = append(cmdArgs, "--presence-penalty", fmt.Sprintf("%g", *presence))
+		}
+		if repeat != nil {
+			cmdArgs = append(cmdArgs, "--repeat-penalty", fmt.Sprintf("%g", *repeat))
+		}
+		child = exec.Command(self, cmdArgs...)
 		child.Stdout, child.Stderr = log, log
 		child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		if e = child.Start(); e != nil {
@@ -247,7 +402,13 @@ func launchReady(ctx context.Context, p Paths, out io.Writer) (Status, error) {
 		done = make(chan error, 1)
 		go func() { done <- child.Wait() }()
 	}
-	starting := startActivity(out, "Starting Flint", "Flint is ready")
+	label := fmt.Sprintf("Starting Flint (%s)", quant)
+	doneLabel := fmt.Sprintf("Flint (%s) is ready", quant)
+	if folder != "" {
+		label = fmt.Sprintf("Starting Flint (%s) (%s)", quant, folder)
+		doneLabel = fmt.Sprintf("Flint (%s) (%s) is ready", quant, folder)
+	}
+	starting := startActivity(out, label, doneLabel)
 	// ReadAt does not share the child's output offset. Show the server's latest
 	// lifecycle line as the phase and keep the whole log for diagnosis.
 	var server bytes.Buffer

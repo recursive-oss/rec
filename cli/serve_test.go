@@ -95,7 +95,7 @@ func TestServeLifecycle(t *testing.T) {
 
 	var out lockedBuffer
 	done := make(chan error, 1)
-	go func() { done <- serve(context.Background(), p, m, runtimeDir, "127.0.0.1", port, &out) }()
+	go func() { done <- serve(context.Background(), p, m, runtimeDir, "127.0.0.1", port, nil, nil, nil, &out) }()
 	deadline := time.Now().Add(2 * time.Minute)
 	var s Status
 	for !s.Ready {
@@ -115,12 +115,12 @@ func TestServeLifecycle(t *testing.T) {
 	}
 
 	var again bytes.Buffer
-	if err := serve(context.Background(), p, m, runtimeDir, "127.0.0.1", port, &again); err != nil || !strings.Contains(again.String(), "test is already running") {
+	if err := serve(context.Background(), p, m, runtimeDir, "127.0.0.1", port, nil, nil, nil, &again); err != nil || !strings.Contains(again.String(), "test is already running") {
 		t.Fatalf("identical run did not reuse the server: %v %s", err, again.String())
 	}
 	changed := m
 	changed.Context, changed.MaxContext = 4096, 4096
-	if err := serve(context.Background(), p, changed, runtimeDir, "127.0.0.1", port, io.Discard); err == nil {
+	if err := serve(context.Background(), p, changed, runtimeDir, "127.0.0.1", port, nil, nil, nil, io.Discard); err == nil {
 		t.Fatal("a different context reused the running server")
 	}
 

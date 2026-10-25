@@ -198,6 +198,7 @@ def make_server(
                 "stop",
                 "frequency_penalty",
                 "repetition_penalty",
+                "repeat_penalty",
                 "presence_penalty",
                 "logprobs",
                 "min_p",
@@ -208,6 +209,8 @@ def make_server(
             unknown = set(self.body) - allowed
             for field in unknown:
                 del self.body[field]
+            if "repeat_penalty" in self.body and "repetition_penalty" not in self.body:
+                self.body["repetition_penalty"] = self.body.pop("repeat_penalty")
             with ignored_fields_lock:
                 for field in sorted(unknown - ignored_fields):
                     logging.warning("Ignoring unsupported request field %r", field)
@@ -235,7 +238,8 @@ def make_server(
                 if self.body.get(key, 0) != 0:
                     raise ValueError(f"Nonzero {key} is not supported by this decoder")
             if self.body.get("repetition_penalty", 1) != 1:
-                raise ValueError("Only neutral repetition_penalty=1 is supported")
+                if engine.identity.get("weight_format") != "mlx-affine-int6":
+                    raise ValueError("repetition_penalty is only supported for INT6 models")
             if self.body.get("store", False) is not False:
                 raise ValueError("Stored-completion retrieval is not supported; use store=false")
             stop = self.body.get("stop")
@@ -302,11 +306,18 @@ def make_server(
                 self.max_tokens = (
                     remaining if explicit_maximum is None else min(self.max_tokens, remaining)
                 )
+                if "temperature" not in self.body and defaults.temperature is not None:
+                    self.temperature = defaults.temperature
+                if "presence_penalty" not in self.body and defaults.presence_penalty is not None:
+                    self.presence_penalty = defaults.presence_penalty
+                if "repetition_penalty" not in self.body and defaults.repetition_penalty is not None:
+                    self.repetition_penalty = defaults.repetition_penalty
                 Sampling(
                     temperature=self.temperature,
                     top_p=self.top_p,
                     top_k=self.top_k,
                     presence_penalty=self.presence_penalty,
+                    repetition_penalty=getattr(self, "repetition_penalty", 1.0),
                     max_tokens=self.max_tokens,
                     seed=defaults.seed if self.seed is None else self.seed,
                 )

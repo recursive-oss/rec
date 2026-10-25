@@ -19,6 +19,22 @@ import (
 //go:embed assets/*
 var assets embed.FS
 
+const (
+	QuantInt4 = "int4"
+	QuantInt6 = "int6"
+)
+
+func validateQuant(q string) (string, error) {
+	norm := strings.ToLower(strings.TrimSpace(q))
+	if norm == "" || norm == QuantInt4 {
+		return QuantInt4, nil
+	}
+	if norm == QuantInt6 {
+		return QuantInt6, nil
+	}
+	return "", fmt.Errorf("invalid quantization %q; supported options are int4 (default, 48 GiB+ RAM) and int6 (64 GiB+ RAM)", q)
+}
+
 var Version = "dev"
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
@@ -134,13 +150,29 @@ func decodeManifest(data []byte) (Manifest, error) {
 	return m, nil
 }
 
-func loadManifest(path string) (Manifest, error) {
+func loadManifest(path string, quant ...string) (Manifest, error) {
+	q := QuantInt4
+	if len(quant) > 0 && quant[0] != "" {
+		var err error
+		q, err = validateQuant(quant[0])
+		if err != nil {
+			return Manifest{}, err
+		}
+	}
 	var data []byte
 	var err error
 	if path != "" {
 		data, err = os.ReadFile(path)
+	} else if q == QuantInt6 {
+		data, err = assets.ReadFile("assets/manifest-int6.json")
+		if os.IsNotExist(err) {
+			return Manifest{}, fmt.Errorf("this CLI has no INT6 release bundle; build with packaging/package.py or supply --manifest for development")
+		}
 	} else {
-		data, err = assets.ReadFile("assets/manifest.json")
+		data, err = assets.ReadFile("assets/manifest-int4.json")
+		if os.IsNotExist(err) {
+			data, err = assets.ReadFile("assets/manifest.json")
+		}
 		if os.IsNotExist(err) {
 			return Manifest{}, fmt.Errorf("this CLI has no release bundle; build with packaging/package.py or supply --manifest and --runtime-dir for development")
 		}

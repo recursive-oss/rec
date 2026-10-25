@@ -66,6 +66,21 @@ def main():
         help="default sampling temperature (default: %(default)s)",
     )
     parser.add_argument(
+        "--presence-penalty",
+        type=float,
+        default=0.0,
+        help="default presence penalty (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--repeat-penalty",
+        "--repeat_penalty",
+        "--repetition-penalty",
+        type=float,
+        default=1.0,
+        dest="repetition_penalty",
+        help="default repetition penalty (default: %(default)s)",
+    )
+    parser.add_argument(
         "--top-p",
         type=float,
         default=0.95,
@@ -93,6 +108,8 @@ def main():
             temperature=args.temperature,
             top_p=args.top_p,
             top_k=args.top_k,
+            presence_penalty=args.presence_penalty,
+            repetition_penalty=args.repetition_penalty,
             max_tokens=args.max_tokens,
         )
     except ValueError as error:

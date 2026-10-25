@@ -66,6 +66,11 @@ def main():
         help="model manifest, such as packaging/flint-int4-mlx.json",
     )
     p.add_argument(
+        "--manifest-int6",
+        type=Path,
+        help="optional INT6 model manifest, such as packaging/flint-int6-mlx.json",
+    )
+    p.add_argument(
         "--version",
         default="0.1.0-dev",
         help="version reported by rec --version (default: %(default)s)",
@@ -90,6 +95,13 @@ def main():
         shutil.rmtree(assets)
         assets.mkdir()
         (assets / "manifest.json").write_text(json.dumps(m, indent=2) + "\n")
+        (assets / "manifest-int4.json").write_text(json.dumps(m, indent=2) + "\n")
+        manifest_int6 = a.manifest_int6 or (root / "packaging/flint-int6-mlx.json")
+        if manifest_int6.exists():
+            m_int6 = json.loads(manifest_int6.read_text())
+            m_int6["runtime_files"] = m["runtime_files"]
+            m_int6["runtime_sha256"] = m["runtime_sha256"]
+            (assets / "manifest-int6.json").write_text(json.dumps(m_int6, indent=2) + "\n")
         (assets / "runtime.tar.gz").write_bytes(archive)
         subprocess.run(
             ["go", "test", "./cli", "-run", "TestEmbeddedManifest"], cwd=build, check=True

@@ -14,6 +14,11 @@ type commandHelp struct {
 	options             [][2]string
 }
 
+var quantOption = [2]string{"--quant FORMAT", "Model quantization: int4 (default, 48 GiB+ RAM) or int6 (64 GiB+ RAM)"}
+var temperatureOption = [2]string{"--temperature NUM", "Sampling temperature between 0 and 2 (default: 1.0)"}
+var presenceOption = [2]string{"--presence-penalty NUM", "Presence penalty between -2 and 2 (default: 0.0)"}
+var repeatOption = [2]string{"--repeat-penalty NUM", "Repetition penalty greater than 0 (default: 1.0)"}
+
 var developmentOptions = [][2]string{
 	{"--manifest FILE", "Use this manifest instead of the bundled one"},
 	{"--runtime-dir DIR", "Use this runtime instead of the bundled one; needs --manifest"},
@@ -22,18 +27,26 @@ var developmentOptions = [][2]string{
 var commands = []commandHelp{
 	{"launch", "pi|opencode", "Start the server if needed and open a harness", [][2]string{
 		{"--args", "Print the harness command instead of running it; needs a running server"},
+		temperatureOption,
+		presenceOption,
+		repeatOption,
+		quantOption,
 	}},
 	{"exec", "pi|opencode ARGS", "Run a harness command, such as installing a plugin", nil},
 	{"serve", "[MODEL]", "Start the model server in this terminal", append([][2]string{
 		{"--context TOKENS", "Total input and output tokens (default: set by the release)"},
 		{"--port PORT", "Local port (default: 11500)"},
 		{"--host HOST", "Network interface to bind the server to (default: 127.0.0.1)"},
+		temperatureOption,
+		presenceOption,
+		repeatOption,
+		quantOption,
 	}, developmentOptions...)},
 	{"status", "", "Show whether the server is running", nil},
 	{"stop", "", "Stop the server", nil},
 	{"auth token", "", "Print the local API key", nil},
-	{"pull", "[MODEL]", "Download the model without starting the server", developmentOptions},
-	{"doctor", "", "Check your hardware and installation", developmentOptions},
+	{"pull", "[MODEL]", "Download the model without starting the server", append([][2]string{quantOption}, developmentOptions...)},
+	{"doctor", "", "Check your hardware and installation", append([][2]string{quantOption}, developmentOptions...)},
 	{"update", "[-y]", "Update rec to the latest release", [][2]string{{"-y", "Do not ask for confirmation"}}},
 	{"uninstall", "[-y]", "Remove rec, its models and its settings", [][2]string{{"-y", "Do not ask for confirmation"}}},
 	{"--version", "", "Print the version", nil},

@@ -136,11 +136,15 @@ class Generator(ResponseGenerator):
             self.busy.clear()
 
     def _start_request(self, request, args):
+        rep = getattr(args.logits, "repetition_penalty", None)
+        if rep is None:
+            rep = self.defaults.repetition_penalty
         sampling = Sampling(
             temperature=args.sampling.temperature,
             top_p=args.sampling.top_p,
             top_k=args.sampling.top_k,
             presence_penalty=args.logits.presence_penalty,
+            repetition_penalty=rep,
             max_tokens=args.max_tokens,
             seed=self.defaults.seed if args.seed is None else args.seed,
         )

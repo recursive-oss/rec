@@ -78,7 +78,7 @@ func TestExistingInstanceUsesEffectiveProfile(t *testing.T) {
 
 func TestContextReachesEngine(t *testing.T) {
 	m := releaseManifest(t)
-	_, args, _ := launchCommand(Paths{}, m, "/runtime", "/model/flint-int4.json", "127.0.0.1", 11500)
+	_, args, _ := launchCommand(Paths{}, m, "/runtime", "/model/flint-int4.json", "127.0.0.1", 11500, nil, nil, nil)
 	found := false
 	for i, arg := range args {
 		if arg == "--context-limit" && i+1 < len(args) {
