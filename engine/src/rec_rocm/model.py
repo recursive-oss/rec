@@ -83,6 +83,7 @@ class FlintModel:
         self.implementation = implementation
         self.rdna4_expert = os.environ.get("REC_RDNA4_EXPERT", "off")
         self.rdna4_attention = os.environ.get("REC_RDNA4_ATTENTION", "off")
+        self.rdna4_pv = os.environ.get("REC_RDNA4_PV", "off")
         self.rdna4_prefill = os.environ.get("REC_RDNA4_PREFILL", "off")
         self.rdna4_norm = os.environ.get("REC_RDNA4_NORM", "off")
         self.rdna4_rope = os.environ.get("REC_RDNA4_ROPE", "off")
@@ -91,6 +92,8 @@ class FlintModel:
             raise ValueError("Unknown REC_RDNA4_EXPERT")
         if self.rdna4_attention not in ("off", "decode", "all", "mask"):
             raise ValueError("Unknown REC_RDNA4_ATTENTION")
+        if self.rdna4_pv not in ("off", "ordered"):
+            raise ValueError("Unknown REC_RDNA4_PV")
         if self.rdna4_prefill not in ("off", "compact", "grouped"):
             raise ValueError("Unknown REC_RDNA4_PREFILL")
         if self.rdna4_norm not in ("off", "on", "apply"):
@@ -488,15 +491,20 @@ class FlintModel:
                     score = torch.cat((score, sinks[:, None, None].expand(-1, count, 1)), -1)
                 probs = torch.softmax(score, -1)[..., : ak.shape[0]]
                 del score
-                attention = (
-                    torch.einsum(
-                        "khmn,nkd->mkhd",
-                        probs.view(c["num_key_value_heads"], repeats, count, ak.shape[0]),
-                        av.float(),
+                if self.rdna4_pv == "ordered" and count == 1 and not self.reference:
+                    from .ordered_attention import decode_pv
+
+                    attention = decode_pv(probs, av, positions, window=cache.window)
+                else:
+                    attention = (
+                        torch.einsum(
+                            "khmn,nkd->mkhd",
+                            probs.view(c["num_key_value_heads"], repeats, count, ak.shape[0]),
+                            av.float(),
+                        )
+                        .reshape(count, c["num_attention_heads"], c["head_dim"])
+                        .to(x.dtype)
                     )
-                    .reshape(count, c["num_attention_heads"], c["head_dim"])
-                    .to(x.dtype)
-                )
                 del probs
             else:
                 attention = ops.attention(

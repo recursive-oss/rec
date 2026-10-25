@@ -6,6 +6,7 @@ import unittest
 import torch
 
 from rec_rocm.model import rope
+from rec_rocm.ordered_attention import decode_pv
 from rec_rocm.rdna4 import mask_sink, norm_apply, rope_apply, sink_attention
 
 
@@ -54,6 +55,42 @@ class ExactPointwise(unittest.TestCase):
 
 
 class Attention(unittest.TestCase):
+    def test_ordered_pv_boundaries_and_graph_position(self):
+        torch.manual_seed(113)
+        for length, position, window in ((1, 0, None), (1025, 777, None), (513, 1027, 513)):
+            with self.subTest(length=length, window=window):
+                kp = torch.arange(length, device="cuda", dtype=torch.int32)
+                if window:
+                    kp = (kp + position - length + 1).roll(137)
+                scores = torch.randn(32, 1, length + 1, device="cuda")
+                scores[..., :length].masked_fill_((kp > position)[None, None], -float("inf"))
+                probability = scores.softmax(-1)[..., :length]
+                value = torch.randn(length, 4, 128, device="cuda", dtype=torch.bfloat16)
+                # Independent CPU simulation: exact products plus FP32-rounded
+                # accumulator after every addition, preserving the physical KV order.
+                pp = probability[:, 0].cpu().double()
+                vv = value.cpu().double().repeat_interleave(8, dim=1)
+                acc = torch.zeros(32, 128)
+                for k in range(length):
+                    acc = (acc.double() + pp[:, k, None] * vv[k]).float()
+                expected = acc.bfloat16()[None]
+                pos = torch.tensor([position], device="cuda", dtype=torch.int32)
+                self.assertTrue(
+                    torch.equal(decode_pv(probability, value, pos, window=window).cpu(), expected)
+                )
+                graph = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(graph):
+                    actual = decode_pv(probability, value, pos, window=window)
+                graph.replay()
+                self.assertTrue(torch.equal(actual.cpu(), expected))
+                if not window and length > 1:
+                    # Future probabilities may be zero, but a Graph must read a
+                    # changed device position rather than freeze a Python length.
+                    pos.fill_(0)
+                    graph.replay()
+                    first = (pp[:, 0, None] * vv[0]).float().bfloat16()[None]
+                    self.assertTrue(torch.equal(actual.cpu(), first))
+
     def test_positions_sink_and_ring(self):
         torch.manual_seed(91)
         for length, position, window in (
