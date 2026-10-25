@@ -11,6 +11,8 @@ historical record.
 export REC_RDNA4_NORM=apply
 export REC_RDNA4_ROPE=fused
 export REC_RDNA4_ATTENTION=mask
+export REC_RDNA4_GRAPH=compact
+export PYTORCH_ALLOC_CONF=expandable_segments:True
 ```
 
 - `NORM=apply` retains the original Torch FP32 square/mean/rsqrt and fuses only
@@ -20,6 +22,14 @@ export REC_RDNA4_ATTENTION=mask
 - `ATTENTION=mask` fuses causal/window masking and insertion of the learned sink.
   QK, softmax and PV retain the original FP32 implementation. The long-prefill
   query-tiled path is unchanged.
+- `GRAPH=compact` saves and restores only the KV slots touched by capture and
+  warmup, including sliding-window wraparound. The original full snapshot remains
+  the default. Full-cache checks at 1K/8K/32K and a small wraparound fixture verify
+  that capture restores the complete cache and position state.
+- `PYTORCH_ALLOC_CONF` is a process allocator setting, not an engine default.
+  Expandable segments are supported by the pinned ROCm/Torch build, including
+  Graph replay. This setting reduces fragmentation in the long-context screen;
+  its memory figures must not be attributed to kernel changes alone.
 
 No checkpoint format, activation/KV precision, routing, sampling, grammar or
 packet size changes. Startup metadata reports all selected options. Request
@@ -33,7 +43,10 @@ were bitwise identical to the preceding c9c4e03 baseline in a single runtime:
 prompt, each with 128 fixed teacher steps. Checks cover all 49 layer outputs,
 logits, greedy tokens and all top-6 expert IDs. The original and candidate
 classes are loaded from separate source files; the baseline is rerun after the
-candidate. The small GPU/protocol suite passes 25 tests with the options enabled.
+candidate. The small GPU/protocol suite passes 26 tests with the options enabled,
+including with expandable segments. Compact capture also passes separate
+128-step Graph A/B/A checks at all three context lengths and lowers capture peak
+allocated memory by 916,272,128 bytes (0.853 GiB) on this model.
 
 An existing cross-process baseline reproducibility issue remains unresolved.
 Unmodified c9c4e03 can produce different trajectories, including after prefill
@@ -43,7 +56,11 @@ not establish deterministic equivalence across arbitrary process initializations
 Invalid A/A experiments were retained and excluded from candidate acceptance.
 No tolerance was relaxed: hidden/logit relative L2 <=1%, exact greedy and route
 agreement on the frozen cases. HTTP and stability qualification are still in
-progress; microbenchmarks are not service performance claims.
+progress; microbenchmarks are not service performance claims. The short HTTP
+memory/protocol screen with expandable segments reaches 27.373 GiB peak reserved
+and 27.857 GiB sampled device use. Native allocator screens exceed the 28 GiB
+gate in either reserved or transient device use. Full-output HTTP and sustained
+memory measurements supersede these preliminary figures.
 
 ## Rejected research switches
 

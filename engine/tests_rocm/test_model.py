@@ -73,6 +73,25 @@ class SmallFlint(unittest.TestCase):
             actual = graph(torch.tensor([i], device="cuda"))
             torch.testing.assert_close(actual, wanted, atol=0, rtol=0)
 
+    def test_compact_graph_restores_all_cache_slots_at_swa_wrap(self):
+        self.model.rdna4_graph = "compact"
+        self.model.decode_attention_capacity = 1024
+        for chunk in (torch.arange(513, device="cuda") % 128).split(128):
+            self.model.forward(chunk)
+        saved = self.model.snapshot()
+        expected = self.model.forward(torch.tensor([17], device="cuda")).clone()
+        self.model.restore(saved)
+        graph = GraphDecoder(self.model)
+        self.assertEqual(self.model.position, saved[0])
+        self.assertEqual(self.model.graph_position.item(), saved[0])
+        for cache, original in zip(self.model.caches, saved[1], strict=True):
+            for current, wanted in zip(
+                (cache.key, cache.value, cache.positions), original, strict=True
+            ):
+                torch.testing.assert_close(current, wanted, atol=0, rtol=0)
+        actual = graph(torch.tensor([17], device="cuda"))
+        torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+
     def test_blas_grouped_assignment_order(self):
         ids = torch.tensor(
             [[1, 1] if i % 5 == 0 else [i % 7, (i * 3) % 7] for i in range(19)], device="cuda"

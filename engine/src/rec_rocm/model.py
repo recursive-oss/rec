@@ -86,6 +86,7 @@ class FlintModel:
         self.rdna4_prefill = os.environ.get("REC_RDNA4_PREFILL", "off")
         self.rdna4_norm = os.environ.get("REC_RDNA4_NORM", "off")
         self.rdna4_rope = os.environ.get("REC_RDNA4_ROPE", "off")
+        self.rdna4_graph = os.environ.get("REC_RDNA4_GRAPH", "off")
         if self.rdna4_expert not in ("off", "simd", "wmma"):
             raise ValueError("Unknown REC_RDNA4_EXPERT")
         if self.rdna4_attention not in ("off", "decode", "all", "mask"):
@@ -96,6 +97,8 @@ class FlintModel:
             raise ValueError("Unknown REC_RDNA4_NORM")
         if self.rdna4_rope not in ("off", "on", "fused"):
             raise ValueError("Unknown REC_RDNA4_ROPE")
+        if self.rdna4_graph not in ("off", "compact"):
+            raise ValueError("Unknown REC_RDNA4_GRAPH")
         # The qualified BLAS profile uses BF16 activations and weights, with
         # FP32 attention. Original INT4 codes and affine metadata are unchanged.
         self.activation_dtype = (
@@ -562,8 +565,38 @@ class GraphDecoder:
     def __init__(self, model):
         self.model = model
         self.input = torch.zeros((1,), device=model.device, dtype=torch.long)
-        state = model.snapshot()
         initial = model.position
+        if initial >= model.capacity:
+            raise ValueError("Context capacity exceeded")
+        compact = getattr(model, "rdna4_graph", "off") == "compact"
+        if compact:
+            # Warmup and capture each write exactly this one position per layer.
+            # Preserve only those slots; copying the entire 33K KV costs ~1 GiB.
+            state = []
+            for cache in model.caches:
+                slot = initial % cache.capacity if cache.window else initial
+                state.append(
+                    (
+                        slot,
+                        cache.key[slot].clone(),
+                        cache.value[slot].clone(),
+                        cache.positions[slot].clone(),
+                    )
+                )
+        else:
+            state = model.snapshot()
+
+        def restore(saved=state):
+            if compact:
+                model.position = initial
+                model.graph_position.fill_(initial)
+                for cache, (slot, key, value, position) in zip(model.caches, saved, strict=True):
+                    cache.key[slot].copy_(key)
+                    cache.value[slot].copy_(value)
+                    cache.positions[slot].copy_(position)
+            else:
+                model.restore(saved)
+
         model.graph_position.fill_(initial)
         model.graph_mode = True
         try:
@@ -575,12 +608,12 @@ class GraphDecoder:
                     model.graph_position.fill_(initial)
                     model.forward(self.input)
             torch.cuda.current_stream().wait_stream(warmup)
-            model.restore(state)
+            restore()
             torch.cuda.synchronize()
             self.graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(self.graph):
                 self.output = model.forward(self.input)
-            model.restore(state)
+            restore()
         finally:
             model.graph_mode = False
             del state
