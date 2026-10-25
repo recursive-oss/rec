@@ -14,6 +14,7 @@ from mlx_lm.server import (
 from mlx_lm.tokenizer_utils import NaiveStreamingDetokenizer, TokenizerWrapper
 
 from .chat import parse_tool_call, seeded_tool_parser
+from .constants import THINKING_BUDGET_FIELD
 from .engine import Sampling
 
 
@@ -168,6 +169,8 @@ class Generator(ResponseGenerator):
             options["grammar"] = request.constraint
         if args.logprobs:
             options["return_logprobs"] = True
+        if request.thinking_budget is not None:
+            options[THINKING_BUDGET_FIELD] = request.thinking_budget
         raw = self.engine.generate_tokens(
             ids,
             sampling,
@@ -186,6 +189,7 @@ class Generator(ResponseGenerator):
             for event in raw:
                 if "metrics" in event:
                     ctx.prompt_cache_count = event["metrics"]["cached_prompt_tokens"]
+                    ctx.metrics = event["metrics"]
                     self.record(
                         sampling,
                         "cancelled" if cancelled() else "complete",
