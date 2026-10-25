@@ -36,6 +36,42 @@ class SmallFlint(unittest.TestCase):
             a, b = self.model.forward(t), self.reference.forward(t)
             self.assertLess(self.relative(a, b), 0.01)
 
+    def test_compact_prefill_nonconsecutive_experts_and_assignments(self):
+        self.model.rdna4_prefill = "compact"
+        # Unequal counts, empty experts and non-sorted top-k order exercise the
+        # active-to-global mapping rather than only a dense set of expert IDs.
+        ids = torch.tensor([[6, 2]] * 17 + [[2, 4]] * 6, device="cuda")
+        path = "model.layers.1.mlp.switch_mlp.gate_proj"
+        packed, scale, bias = [
+            self.model.weights[path + "." + name] for name in ("weight", "scales", "biases")
+        ]
+        weights = (
+            torch.from_numpy(unpack_affine(packed.cpu(), scale.float().cpu(), bias.float().cpu()))
+            .to(torch.bfloat16)
+            .double()
+        )
+        for assignments in (False, True):
+            count = ids.numel() if assignments else ids.shape[0]
+            x = torch.randn(count, 64, device="cuda", dtype=torch.bfloat16)
+            cpu_x = x.cpu().double()
+            expected = torch.stack(
+                [
+                    F.linear(cpu_x[i if assignments else i // 2], weights[expert])
+                    for i, expert in enumerate(ids.flatten().tolist())
+                ]
+            ).to(device="cuda", dtype=torch.bfloat16)
+            original_bmm = torch.bmm
+
+            def inspect_bmm(left, right):
+                self.assertEqual(left.shape[0], 3)
+                self.assertEqual(right.shape[0], 3)
+                self.assertEqual(right.data_ptr(), self.model.dequant_workspace.data_ptr())
+                return original_bmm(left, right)
+
+            with patch("torch.bmm", side_effect=inspect_bmm):
+                actual = self.model.linear(x, path, ids, x_assignments=assignments)
+            self.assertLess(self.relative(actual.float(), expected.float()), 0.01)
+
     def test_prefix_snapshot_and_chunk_equivalence(self):
         tokens = torch.arange(32, device="cuda")
         full = self.model.forward(tokens)

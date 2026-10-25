@@ -357,6 +357,17 @@ class FlintModel:
             layout if layout is not None else self.blas_layout(ids, w.shape[0])
         )
         source = assignment if x_assignments else assignment // ids.shape[-1]
+        if self.rdna4_prefill == "compact" and not self.reference:
+            # Preserve stable assignment order and the BF16 BMM boundary, but
+            # never materialize inactive expert inputs or copy unpacked weights.
+            inputs = x[source[active]].masked_fill(~valid[active, :, None], 0)
+            shape = (active.numel(), w.shape[-2], w.shape[-1] * 2)
+            weight = self.dequant_workspace[: math.prod(shape)].view(shape)
+            ops.dequantize_experts(w, s, b, active, weight)
+            inverse = torch.zeros(w.shape[0], dtype=torch.long, device=x.device)
+            inverse[active] = torch.arange(active.numel(), device=x.device)
+            values = torch.bmm(inputs, weight.transpose(-1, -2))
+            return values[inverse[flat], rank]
         inputs = x[source].masked_fill(~valid[..., None], 0)
         if self.reference:
             shape = (*w.shape[:-1], w.shape[-1] * 2)
@@ -368,11 +379,6 @@ class FlintModel:
             shape = (*w.shape[:-1], w.shape[-1] * 2)
             weight = self.dequant_workspace[: math.prod(shape)].view(shape)
             ops.dequantize_experts(w, s, b, active, weight, sparse=True)
-        if self.rdna4_prefill == "compact" and not self.reference:
-            inverse = torch.zeros(w.shape[0], dtype=torch.long, device=x.device)
-            inverse[active] = torch.arange(active.numel(), device=x.device)
-            values = torch.bmm(inputs[active], weight[active].transpose(-1, -2))
-            return values[inverse[flat], rank]
         values = torch.bmm(inputs, weight.transpose(-1, -2))
         return values[flat, rank]
 
