@@ -57,7 +57,7 @@ class Engine:
             "implementation": implementation,
             "rdna4_options": {
                 name: getattr(self.model, "rdna4_" + name)
-                for name in ("expert", "attention", "prefill", "norm", "rope", "graph")
+                for name in ("expert", "attention", "prefill", "norm", "rope", "graph", "pv")
             },
             "dense_cache_bytes": sum(
                 t.numel() * t.element_size() for t in self.model.dense_cache.values()
