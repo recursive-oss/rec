@@ -15,11 +15,30 @@ from .anthropic import (
     chat_to_message,
     messages_to_chat,
 )
+from .constants import (
+    METRIC_FORCED_CLOSE,
+    METRIC_REASONING_TOKENS,
+    THINKING_BUDGET_FIELD,
+    USAGE_FORCED_CLOSE,
+    USAGE_REASONING_TOKENS,
+)
 from .engine import Sampling
 
 
 class RequestError(ValueError):
     pass
+
+
+class MissingMetricsError(RuntimeError):
+    pass
+
+
+def reject_messages_budget(body):
+    """/v1/messages has no thinking budget; refuse the field instead of dropping it."""
+    if THINKING_BUDGET_FIELD in body:
+        raise ValueError(
+            f"{THINKING_BUDGET_FIELD} is not supported on /v1/messages; use /v1/chat/completions"
+        )
 
 
 def make_server(
@@ -113,6 +132,14 @@ def make_server(
                 super().do_POST()
             except RequestError as error:
                 self._reject(400, str(error))
+            except MissingMetricsError as error:
+                if self.stream:
+                    # Headers are already sent; report the failure inside the stream.
+                    self.wfile.write(f"data: {json.dumps({'error': str(error)})}\n\n".encode())
+                else:
+                    # mlx-lm buffered a 200 status line before building the response.
+                    self._headers_buffer = []
+                    self._reject(500, str(error))
             except (BrokenPipeError, ConnectionResetError):
                 logging.info("Client disconnected; cancelling its generation")
             finally:
@@ -122,6 +149,7 @@ def make_server(
             length = int(self.headers["Content-Length"])
             try:
                 body = json.loads(self.rfile.read(length).decode())
+                reject_messages_budget(body)
                 chat, ignored, include_thinking = messages_to_chat(body)
             except (json.JSONDecodeError, UnicodeDecodeError) as error:
                 raise RequestError(f"Invalid JSON in request body: {error}") from error
@@ -157,8 +185,36 @@ def make_server(
             self.completion_status = status
             super()._set_completion_headers(status)
 
+        def usage_extras(self):
+            # Usage keys exist only when the request set thinking_budget (0 counts).
+            if self.current_request.thinking_budget is None:
+                return {}
+            metrics = getattr(self.current_request.generation_context, "metrics", None)
+            if metrics is None:
+                raise MissingMetricsError(
+                    "Generation ended without a metrics event; usage is unavailable"
+                )
+            missing = [
+                key for key in (METRIC_REASONING_TOKENS, METRIC_FORCED_CLOSE) if key not in metrics
+            ]
+            if missing:
+                raise MissingMetricsError(
+                    f"thinking_budget was set but metrics lack {missing}; usage is unavailable"
+                )
+            return {
+                USAGE_REASONING_TOKENS: metrics[METRIC_REASONING_TOKENS],
+                USAGE_FORCED_CLOSE: metrics[METRIC_FORCED_CLOSE],
+            }
+
+        def completion_usage_response(self, *args, **kwargs):
+            response = super().completion_usage_response(*args, **kwargs)
+            response["usage"].update(self.usage_extras())
+            return response
+
         def generate_response(self, *args, **kwargs):
             response = super().generate_response(*args, **kwargs)
+            if "usage" in response:
+                response["usage"].update(self.usage_extras())
             for choice in response["choices"]:
                 if "logprobs" in choice:
                     for entry in choice["logprobs"]["content"]:
@@ -204,6 +260,7 @@ def make_server(
                 "store",
                 "grammar",
                 "parallel_tool_calls",
+                THINKING_BUDGET_FIELD,
             }
             unknown = set(self.body) - allowed
             for field in unknown:
@@ -229,6 +286,9 @@ def make_server(
             super().validate_model_parameters()
             if self.stream and self.logprobs:
                 raise ValueError("Token logprobs require stream=false")
+            budget = self.body.get(THINKING_BUDGET_FIELD)
+            if THINKING_BUDGET_FIELD in self.body and (type(budget) is not int or budget < 0):
+                raise ValueError(f"{THINKING_BUDGET_FIELD} must be a nonnegative integer")
             if self.requested_model != "flint":
                 raise ValueError("The served model is flint")
             for key in ("frequency_penalty", "min_p"):
@@ -255,6 +315,8 @@ def make_server(
             mode = self.body["grammar"] if "grammar" in self.body else grammar_mode
             if mode not in ("none", "flint"):
                 raise ValueError("grammar must be none or flint")
+            if budget is not None and mode != "flint":
+                raise ValueError(f"{THINKING_BUDGET_FIELD} requires grammar=flint")
             if mode == "flint" and self.body.get("stop"):
                 raise ValueError("Flint grammar cannot be combined with custom stop strings")
             if (
@@ -302,6 +364,8 @@ def make_server(
                 self.max_tokens = (
                     remaining if explicit_maximum is None else min(self.max_tokens, remaining)
                 )
+                if self.body.get(THINKING_BUDGET_FIELD) is not None:
+                    engine.validate_thinking_budget(ids, self.body[THINKING_BUDGET_FIELD])
                 Sampling(
                     temperature=self.temperature,
                     top_p=self.top_p,
@@ -326,6 +390,8 @@ def make_server(
                 else:
                     self.wfile = ErrorTranslator(self.wfile, status)
             request.prompt_tokens = ids
+            self.current_request = request
+            request.thinking_budget = self.body.get(THINKING_BUDGET_FIELD)
             request.is_disconnected = self.is_disconnected
             request.generation_context = None
             try:

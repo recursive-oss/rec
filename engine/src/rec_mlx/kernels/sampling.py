@@ -72,8 +72,15 @@ if(stop)break;
         presence_penalty=0.0,
         grammar=None,
         logprobs=None,
+        feed_only=False,
     ):
         module, engine = self.module, self.engine
+        if feed_only:
+            # Write `token` into the KV and advance one position without sampling anything.
+            if count != 1:
+                raise ValueError("feed_only feeds exactly one token")
+            engine.forward(state, token)
+            return []
         if not 1 <= count <= WIDTH:
             raise ValueError("Resident packet must contain between one and eight tokens")
         engine.ensure_capacity(state, count)
