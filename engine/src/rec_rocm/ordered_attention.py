@@ -21,15 +21,18 @@ def _decode_pv(
     REPEATS: tl.constexpr,
     P_ROW: tl.constexpr,
     TRUNCATE: tl.constexpr,
+    BD: tl.constexpr,
+    BQ: tl.constexpr,
+    BT: tl.constexpr,
 ):
     kv = tl.program_id(2)
-    d = tl.program_id(0) * 16 + tl.arange(0, 16)
-    head = tl.program_id(1) * 4 + tl.arange(0, 4)
-    kk = tl.arange(0, 8)
+    d = tl.program_id(0) * BD + tl.arange(0, BD)
+    head = tl.program_id(1) * BQ + tl.arange(0, BQ)
+    kk = tl.arange(0, BT)
     count = tl.minimum(tl.load(POSITION) + 1, T) if TRUNCATE else T
-    acc = tl.full((16, 4), 0, tl.float32)
-    for start in range(tl.cdiv(count, 8)):
-        k = start * 8 + kk
+    acc = tl.full((BD, BQ), 0, tl.float32)
+    for start in range(tl.cdiv(count, BT)):
+        k = start * BT + kk
         value = tl.load(V + (k[None, :] * KV + kv) * 128 + d[:, None], k[None, :] < count, 0).to(
             tl.float32
         )
@@ -38,9 +41,9 @@ def _decode_pv(
             (head[:, None] < REPEATS) & (k[None, :] < count),
             0,
         )
-        for offset in tl.static_range(8):
-            vv = tl.gather(value, tl.full((16, 1), offset, tl.int32), 1).reshape(16)
-            pp = tl.gather(probability, tl.full((4, 1), offset, tl.int32), 1).reshape(4)
+        for offset in tl.static_range(BT):
+            vv = tl.gather(value, tl.full((BD, 1), offset, tl.int32), 1).reshape(BD)
+            pp = tl.gather(probability, tl.full((BQ, 1), offset, tl.int32), 1).reshape(BQ)
             acc = tl.fma(vv[:, None], pp[None, :], acc)
     tl.store(OUT + (kv * REPEATS + head[None, :]) * 128 + d[:, None], acc, head[None, :] < REPEATS)
 
@@ -60,8 +63,11 @@ def decode_pv(probability, value, positions, *, window=None):
     kvheads = value.shape[1]
     assert heads % kvheads == 0
     repeats = heads // kvheads
+    # Smaller wave32 tiles won the bounded ABBA local screen. Every output
+    # retains the same ascending-K FP32 FMA sequence and BF16 store boundary.
+    bd, bq, bt = (8, 2, 4) if window is None else (4, 4, 8)
     out = torch.empty((1, heads, 128), device=value.device, dtype=value.dtype)
-    _decode_pv[(8, tr.cdiv(repeats, 4), kvheads)](
+    _decode_pv[(tr.cdiv(128, bd), tr.cdiv(repeats, bq), kvheads)](
         probability,
         value,
         out,
@@ -71,6 +77,9 @@ def decode_pv(probability, value, positions, *, window=None):
         repeats,
         probability.stride(1),
         window is None,
+        bd,
+        bq,
+        bt,
         num_warps=1,
         enable_fp_fusion=False,
     )

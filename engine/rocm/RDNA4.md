@@ -11,8 +11,10 @@ The source/build under qualification are recorded in the workspace
 `profile-ordered.json`. The combined implementation at `e12c03e` passed seven
 frozen 128-step A/B/A cases and all three Graph cases. Small-model tests then
 identified the need to keep the original PV implementation for head dimensions
-other than 128. That guard is now explicit; qualification of the final source,
-complete HTTP, memory and sustained load are still in progress. Do not treat local kernel timing as an accepted service speedup.
+other than 128. That guard is now explicit. A subsequent bounded wave32 tile search and ABBA
+probe selected smaller PV tiles (full 8/2/4, window 4/4/8 for D/Q/K). The final
+source requires fresh numerical/Graph gates and full HTTP, memory and sustained
+load qualification, all still in progress. Do not treat local kernel timing as an accepted service speedup.
 
 ```bash
 export PYTORCH_ALLOC_CONF=expandable_segments:True
@@ -77,7 +79,10 @@ The ordered-PV local probe covered six shapes and eight configurations, all
 FP32/BF16 bitwise equal to the verified vendor family. Hot isolated decode PV
 chains improved 2.55–4.95x. Both prefill cases regressed, so prefill was excluded
 from this path. Independent CPU arithmetic and Graph position-change tests
-exercise the integrated implementation. Complete service gains remain pending.
+exercise the integrated implementation. The smaller tiles then passed five ABBA rounds against the integrated first
+version, improving isolated PV by 1.19x for the window and 1.43–1.47x for full
+attention. These ratios must not be multiplied into earlier benchmarks or
+quoted as service gains. Complete service gains remain pending.
 
 ## Prior rejected configurations and research paths
 
@@ -94,6 +99,10 @@ exercise the integrated implementation. Complete service gains remain pending.
   an exact candidate on all six real fixtures. CPU FP64 checks demonstrate
   BF16 midpoint sensitivity; more accurate arithmetic is not automatically
   equivalent to the original rounded path.
+- Token-count buckets with vendor BMM reduced estimated padding, but 282 real
+  projections showed differences. A controlled 16-step model screen failed
+  (max logit/hidden relative L2 3.27%/14.60%, 275 layer/step route mismatches);
+  the post-control was exact. This path remains outside the engine.
 - `ROPE=on` is an angle-reuse ablation of `fused`.
 
 Local evidence is under `artifacts/amd/rocm10/rdna4-opt/20261025-a` in the parent
