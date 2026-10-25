@@ -1,5 +1,8 @@
 # Experimental Flint backend for Linux/ROCm
 
+For this branch's opt-in performance work and its numerical limitations, see
+[the RDNA4 experiment record](RDNA4.md).
+
 This backend runs the original `RecursiveSI/flint-int4` checkpoint through rec's
 CLI on one AMD GPU. It is a development implementation using PyTorch, Triton and
 HIP Graphs. It does not port the Metal resident megakernel, and its current

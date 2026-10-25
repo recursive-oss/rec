@@ -44,6 +44,7 @@ class Engine:
         self._tokens = []
         self._logits = None
         self._graph = None
+        self._graph_captures = 0
         self.startup = {
             "device": device.name,
             "architecture": device.gcnArchName.split(":")[0],
@@ -54,6 +55,10 @@ class Engine:
             "engine": "rocm",
             "chat_template": "flint",
             "implementation": implementation,
+            "rdna4_options": {
+                name: getattr(self.model, "rdna4_" + name)
+                for name in ("expert", "attention", "prefill", "norm", "rope")
+            },
             "dense_cache_bytes": sum(
                 t.numel() * t.element_size() for t in self.model.dense_cache.values()
             ),
@@ -128,6 +133,7 @@ class Engine:
         if self.use_graph and self._graph is None:
             self._graph = GraphDecoder(self.model)
             self._graph.attention_capacity = extent
+            self._graph_captures += 1
         self.model.graph_position.fill_(self.model.position)
         constraint = grammar.session() if grammar is not None else None
         stops = self.eos if constraint is None else set(constraint.stops)
@@ -208,7 +214,9 @@ class Engine:
             }
         end = time.perf_counter()
         decode = (stamps[-1] - stamps[0]) if len(stamps) > 1 else 0
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
         metrics = {
+            "device_used_bytes_at_request_end": total_bytes - free_bytes,
             "prompt_tokens": len(ids),
             "generated_tokens": len(generated),
             "token_ids": generated,
@@ -220,6 +228,7 @@ class Engine:
             "decode_tokens_per_second": (len(stamps) - 1) / decode if decode else 0,
             "request_seconds": end - start,
             "decode_strategy": "hip_graph" if self._graph is not None else "eager",
+            "graph_capture_count": self._graph_captures,
             "logical_device": 0,
             "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
             "peak_reserved_bytes": torch.cuda.max_memory_reserved(),

@@ -22,11 +22,14 @@ def reference_dequant(w, scales, offsets, bits=4):
     ) + offsets.float().repeat_interleave(64, -1)
 
 
-def rope(x, positions, theta=10000.0):
+def rope(x, positions, theta=10000.0, angles=None):
     half = x.shape[-1] // 2
-    freq = theta ** (-torch.arange(half, device=x.device, dtype=torch.float32) / half)
-    angle = positions.float()[:, None] * freq[None]
-    c, s = angle.cos()[:, None], angle.sin()[:, None]
+    if angles is None:
+        freq = theta ** (-torch.arange(half, device=x.device, dtype=torch.float32) / half)
+        angle = positions.float()[:, None] * freq[None]
+        c, s = angle.cos()[:, None], angle.sin()[:, None]
+    else:
+        c, s = angles
     left, right = x[..., :half].float(), x[..., half:].float()
     return torch.cat((left * c - right * s, right * c + left * s), -1).to(x.dtype)
 
@@ -78,6 +81,21 @@ class FlintModel:
         self.capacity = capacity
         self.reference = reference
         self.implementation = implementation
+        self.rdna4_expert = os.environ.get("REC_RDNA4_EXPERT", "off")
+        self.rdna4_attention = os.environ.get("REC_RDNA4_ATTENTION", "off")
+        self.rdna4_prefill = os.environ.get("REC_RDNA4_PREFILL", "off")
+        self.rdna4_norm = os.environ.get("REC_RDNA4_NORM", "off")
+        self.rdna4_rope = os.environ.get("REC_RDNA4_ROPE", "off")
+        if self.rdna4_expert not in ("off", "simd", "wmma"):
+            raise ValueError("Unknown REC_RDNA4_EXPERT")
+        if self.rdna4_attention not in ("off", "decode", "all", "mask"):
+            raise ValueError("Unknown REC_RDNA4_ATTENTION")
+        if self.rdna4_prefill not in ("off", "compact", "grouped"):
+            raise ValueError("Unknown REC_RDNA4_PREFILL")
+        if self.rdna4_norm not in ("off", "on", "apply"):
+            raise ValueError("Unknown REC_RDNA4_NORM")
+        if self.rdna4_rope not in ("off", "on", "fused"):
+            raise ValueError("Unknown REC_RDNA4_ROPE")
         # The qualified BLAS profile uses BF16 activations and weights, with
         # FP32 attention. Original INT4 codes and affine metadata are unchanged.
         self.activation_dtype = (
@@ -212,6 +230,15 @@ class FlintModel:
 
     def linear(self, x, path, ids=None, layout=None, x_assignments=False):
         w, s, b = [self.weights[path + "." + name] for name in ("weight", "scales", "biases")]
+        if not self.reference and ids is not None:
+            if ids.shape[0] == 1 and self.rdna4_expert != "off":
+                if self.rdna4_expert == "wmma":
+                    return ops.decode_dot(x, w, s, b, ids.flatten(), x_assignments)
+                return ops.gemv(
+                    x, w, s, b, ids=ids.flatten(), x_expert=x_assignments, round_bf16=True
+                )
+            if ids.shape[0] > 16 and self.rdna4_prefill == "grouped":
+                return ops.quantized_mm(x, w, s, b, ids=ids, x_assignments=x_assignments)
         if self.implementation in ("blas", "hybrid"):
             if (
                 self.implementation == "hybrid"
@@ -255,6 +282,12 @@ class FlintModel:
 
     def norm(self, x, path):
         w = self.weights[path]
+        if self.rdna4_norm == "apply" and not self.reference:
+            from .rdna4 import norm_apply
+
+            return norm_apply(x, w, self.config["rms_norm_eps"])
+        if self.rdna4_norm == "on" and not self.reference:
+            return ops.rms_norm(x, w, self.config["rms_norm_eps"])
         if self.reference or self.implementation in ("blas", "hybrid"):
             return (
                 x.float()
@@ -332,6 +365,11 @@ class FlintModel:
             shape = (*w.shape[:-1], w.shape[-1] * 2)
             weight = self.dequant_workspace[: math.prod(shape)].view(shape)
             ops.dequantize_experts(w, s, b, active, weight, sparse=True)
+        if self.rdna4_prefill == "compact" and not self.reference:
+            inverse = torch.zeros(w.shape[0], dtype=torch.long, device=x.device)
+            inverse[active] = torch.arange(active.numel(), device=x.device)
+            values = torch.bmm(inputs[active], weight[active].transpose(-1, -2))
+            return values[inverse[flat], rank]
         values = torch.bmm(inputs, weight.transpose(-1, -2))
         return values[flat, rank]
 
@@ -361,6 +399,14 @@ class FlintModel:
             x = ops.embedding(tokens, *emb, dtype=self.activation_dtype)
         self.last_trace = []
         c = self.config
+        angles = None
+        if self.rdna4_rope != "off" and not self.reference:
+            half = c["head_dim"] // 2
+            freq = c["rope_theta"] ** (
+                -torch.arange(half, device=self.device, dtype=torch.float32) / half
+            )
+            angle = positions.float()[:, None] * freq[None]
+            angles = angle.cos()[:, None], angle.sin()[:, None]
         for i, cache in enumerate(self.caches):
             p = f"model.layers.{i}"
             h = self.norm(x, p + ".input_layernorm.weight")
@@ -374,7 +420,15 @@ class FlintModel:
             q = self.norm(q.contiguous(), p + ".self_attn.q_norm.weight")
             key = self.norm(key.contiguous(), p + ".self_attn.k_norm.weight")
             if i not in c["no_rope_layer_indices"]:
-                q, key = rope(q, positions, c["rope_theta"]), rope(key, positions, c["rope_theta"])
+                if self.rdna4_rope == "fused" and not self.reference:
+                    from .rdna4 import rope_apply
+
+                    q, key = rope_apply(q, angles), rope_apply(key, angles)
+                else:
+                    q, key = (
+                        rope(q, positions, c["rope_theta"], angles),
+                        rope(key, positions, c["rope_theta"], angles),
+                    )
             key, value = key.bfloat16(), value.bfloat16()
             if cache.window and count > 1:
                 ak = torch.cat((cache.key, key))
@@ -390,7 +444,13 @@ class FlintModel:
                     end = self.position + count
                     ak, av, ap = ak[:end], av[:end], ap[:end]
             sinks = self.weights[p + ".self_attn.softmax_offset"].float()
-            if (
+            if not self.reference and (
+                self.rdna4_attention == "all" or (self.rdna4_attention == "decode" and count == 1)
+            ):
+                from .rdna4 import sink_attention
+
+                attention = sink_attention(q, ak, av, sinks, positions, ap, cache.window)
+            elif (
                 not self.reference
                 and self.implementation in ("blas", "hybrid")
                 and not cache.window
@@ -407,11 +467,16 @@ class FlintModel:
                     q.float().view(count, c["num_key_value_heads"], repeats, c["head_dim"]),
                     ak.float(),
                 ).reshape(c["num_attention_heads"], count, ak.shape[0]) / math.sqrt(c["head_dim"])
-                allowed = (ap[None] <= positions[:, None]) & (ap[None] >= 0)
-                if cache.window:
-                    allowed &= ap[None] > positions[:, None] - cache.window
-                score = score.masked_fill(~allowed[None], -float("inf"))
-                score = torch.cat((score, sinks[:, None, None].expand(-1, count, 1)), -1)
+                if self.rdna4_attention == "mask" and not self.reference:
+                    from .rdna4 import mask_sink
+
+                    score = mask_sink(score, sinks, positions, ap, cache.window)
+                else:
+                    allowed = (ap[None] <= positions[:, None]) & (ap[None] >= 0)
+                    if cache.window:
+                        allowed &= ap[None] > positions[:, None] - cache.window
+                    score = score.masked_fill(~allowed[None], -float("inf"))
+                    score = torch.cat((score, sinks[:, None, None].expand(-1, count, 1)), -1)
                 probs = torch.softmax(score, -1)[..., : ak.shape[0]]
                 del score
                 attention = (
