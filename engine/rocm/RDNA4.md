@@ -1,84 +1,104 @@
 # RDNA4 performance experiments
 
-This branch adds opt-in Triton candidates for the pinned gfx1201 configuration
-described in [README.md](README.md). Every option defaults to `off`. This is a
-local development branch; the original ROCm qualification record remains a
-historical record.
+This development branch adds opt-in gfx1201 candidates to the experimental
+Linux/ROCm Flint backend. Every engine option defaults to `off`. The checkpoint,
+BF16 activation/KV formats, router ordering, grammar and sampling contract remain
+unchanged. The ordinary setup is described in [README.md](README.md).
 
-## Candidate preserving the original reductions
+## Current experimental configuration
+
+The source/build under qualification are recorded in the workspace
+`profile-ordered.json`. The combined implementation at `e12c03e` passed seven
+frozen 128-step A/B/A cases and all three Graph cases. Small-model tests then
+identified the need to keep the original PV implementation for head dimensions
+other than 128. That guard is now explicit; qualification of the final source,
+complete HTTP, memory and sustained load are still in progress. Do not treat local kernel timing as an accepted service speedup.
 
 ```bash
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+export REC_DENSE_CACHE_MIB=2048
 export REC_RDNA4_NORM=apply
 export REC_RDNA4_ROPE=fused
 export REC_RDNA4_ATTENTION=mask
 export REC_RDNA4_GRAPH=compact
-export PYTORCH_ALLOC_CONF=expandable_segments:True
+export REC_RDNA4_PREFILL=compact
+export REC_RDNA4_PV=ordered
+# This must point to the validated table for the exact qualified library build:
+export HIPBLASLT_TUNING_OVERRIDE_FILE=/path/to/c9-family-compact.csv
 ```
 
-- `NORM=apply` retains the original Torch FP32 square/mean/rsqrt and fuses only
-  the two following multiplications and BF16 store.
-- `ROPE=fused` shares the original Torch cos/sin across layers and fuses rotation
-  with FP32 intermediate operations. FP contraction is disabled.
-- `ATTENTION=mask` fuses causal/window masking and insertion of the learned sink.
-  QK, softmax and PV retain the original FP32 implementation. The long-prefill
-  query-tiled path is unchanged.
-- `GRAPH=compact` saves and restores only the KV slots touched by capture and
-  warmup, including sliding-window wraparound. The original full snapshot remains
-  the default. Full-cache checks at 1K/8K/32K and a small wraparound fixture verify
-  that capture restores the complete cache and position state.
-- `PYTORCH_ALLOC_CONF` is a process allocator setting, not an engine default.
-  Expandable segments are supported by the pinned ROCm/Torch build, including
-  Graph replay. This setting reduces fragmentation in the long-context screen;
-  its memory figures must not be attributed to kernel changes alone.
+| Option | Behavior |
+| --- | --- |
+| `NORM=apply` | Retain Torch FP32 square/mean/rsqrt; fuse the following two multiplications and BF16 store. |
+| `ROPE=fused` | Share original Torch cos/sin across layers; fuse rotation with FP contraction disabled. |
+| `ATTENTION=mask` | Fuse causal/window masking and learned-sink insertion; retain QK and softmax. |
+| `GRAPH=compact` | Save/restore only slots touched by capture and warmup, including ring wrap; retain the original full snapshot as default. |
+| `PREFILL=compact` | Gather active-expert inputs and unpack their weights directly into contiguous reusable workspace. Preserve BF16 BMM and stable assignment order. |
+| `PV=ordered` | For single-token decode with head dimension 128, read BF16 V directly and accumulate FP32 FMAs in ascending physical K order. Prefill retains BLAS. |
 
-No checkpoint format, activation/KV precision, routing, sampling, grammar or
-packet size changes. Startup metadata reports all selected options. Request
-metrics include graph capture count and device usage at request completion.
+Full-attention decode has a contiguous valid KV prefix, so ordered PV can omit
+future slots. Sliding-window decode visits the complete physical ring. The
+position is read from device memory on every Graph replay. This path preserves
+the softmax sink denominator and the BF16 attention-output boundary.
 
-## Numerical evidence and limits
+Expandable segments and dense-cache size are process settings, not new engine
+defaults. The original c9 comparison retains its 3584 MiB cache budget. Startup
+metadata reports all selected engine options, including `pv`; request metrics
+report Graph capture count and device usage at request completion.
 
-On 2026-10-25, the combined candidate and the following frozen-source control
-were bitwise identical to the preceding c9c4e03 baseline in a single runtime:
-1K, 8K and 32K prompts, Chinese, code, tool JSON text and a held-out arithmetic
-prompt, each with 128 fixed teacher steps. Checks cover all 49 layer outputs,
-logits, greedy tokens and all top-6 expert IDs. The original and candidate
-classes are loaded from separate source files; the baseline is rerun after the
-candidate. The small GPU/protocol suite passes 26 tests with the options enabled,
-including with expandable segments. Compact capture also passes separate
-128-step Graph A/B/A checks at all three context lengths and lowers capture peak
-allocated memory by 916,272,128 bytes (0.853 GiB) on this model.
+## Numerical and algorithm-selection contract
 
-An existing cross-process baseline reproducibility issue remains unresolved.
-Unmodified c9c4e03 can produce different trajectories, including after prefill
-warmup. Captured differences first appear in layer-0 attention output; preceding
-projections and Q/K norm agree. Therefore same-runtime A/B/A qualification does
-not establish deterministic equivalence across arbitrary process initializations.
-Invalid A/A experiments were retained and excluded from candidate acceptance.
-No tolerance was relaxed: hidden/logit relative L2 <=1%, exact greedy and route
-agreement on the frozen cases. HTTP and stability qualification are still in
-progress; microbenchmarks are not service performance claims. The short HTTP
-memory/protocol screen with expandable segments reaches 27.373 GiB peak reserved
-and 27.857 GiB sampled device use. Native allocator screens exceed the 28 GiB
-gate in either reserved or transient device use. Full-output HTTP and sustained
-memory measurements supersede these preliminary figures.
+The recorded platform is Radeon AI PRO R9700/gfx1201, ROCm 10.1, Torch
+2.14.0+rocm10.1.0 and the pinned Triton build. The loaded hipBLASLt revision is
+`39d8d603`; library SHA-256 is
+`a3922eda57c8789b75e234f0cc3e92ca5a07f6e0cb1450cb280b8a321601a5fb`.
+The experimental override table SHA-256 is
+`16d22a9814fc8d395c39bc5619de43724354d96775b0010ce9c460e096e16735`.
+It records/expands known shapes and fixes the observed FP32 QK/PV family to
+140222/140206. Solution indices are not portable across library builds.
+Unrecorded shapes can fall back to the vendor heuristic.
 
-## Rejected research switches
+Unmodified c9 can select different FP32 PV algorithms across processes. Replays
+with identical QK and softmax probabilities demonstrated different FP32/BF16 PV
+outputs; a valid algorithm override reproduced either result. The reason for
+all heuristic variation has not been fully explained. In this library the CSV
+requires an exact `Git Version` first line and a header before every data row;
+a conventional one-header CSV was silently ineffective in earlier experiments.
 
-The following implementations are retained for diagnosis and default to `off`:
+Against the fixed family, the candidate at `e12c03e` and subsequent frozen-c9 control
+match the preceding c9 result bitwise on 1K/8K/32K, Chinese, code, tool JSON text
+and a held-out arithmetic case, each for 128 fixed teacher steps. Checks cover
+all 49 hidden outputs, logits, greedy tokens and top-6 expert IDs/order. Teachers
+are immutable, including the first valid original-c9 sequences for short cases.
+This bounds the claim to the exercised inputs/runtime; it does not establish
+arbitrary-input or cross-version deterministic equivalence.
 
-| Variable | Values | Full-model screening result |
-| --- | --- | --- |
-| `REC_RDNA4_EXPERT` | `simd`, `wmma` | Hidden/logit or route gate failed |
-| `REC_RDNA4_PREFILL` | `compact`, `grouped` | Hidden/logit or route gate failed |
-| `REC_RDNA4_ATTENTION` | `decode`, `all` | Hidden/logit or route gate failed |
-| `REC_RDNA4_NORM` | `on` | Hidden/logit or route gate failed |
+The ordered-PV local probe covered six shapes and eight configurations, all
+FP32/BF16 bitwise equal to the verified vendor family. Hot isolated decode PV
+chains improved 2.55–4.95x. Both prefill cases regressed, so prefill was excluded
+from this path. Independent CPU arithmetic and Graph position-change tests
+exercise the integrated implementation. Complete service gains remain pending.
 
-`REC_RDNA4_ROPE=on` only reuses angles and is an ablation of `fused`. Failed
-projection/attention candidates must not be interpreted as qualified serving
-paths, even when their isolated operator error is small. Real projection
-fixtures and independent CPU FP64 checks show BF16 midpoint sensitivity; local
-agreement alone does not establish full-model agreement for this MoE model.
+## Prior rejected configurations and research paths
 
-Local artifacts are recorded under run ID `rdna4-opt/20261025-a`, including
-source hashes, frozen fixtures, rejected candidates, profiler traces and raw
-measurements. They are not embedded in the runtime bundle.
+- The initial pointwise/compact-Graph service diverged from historical HTTP
+  output at token 67. Same-runtime A/B/A alone did not qualify that service.
+- Packed compact prefill at `683113b`, with the fixed BLAS table, passed all
+  numerical/Graph gates and three-context 128-token HTTP screens. Complete
+  service-lifetime device usage reached 28.588 GiB, exceeding the unchanged
+  28 GiB budget; its formal matrix was therefore blocked. Smaller short-screen
+  memory figures were not used to override that failure.
+- `EXPERT=simd/wmma`, `PREFILL=grouped`, `ATTENTION=decode/all`, and `NORM=on`
+  retain research implementations that failed full-model hidden/logit or route
+  gates. The projection search tested 102 bounded configurations without finding
+  an exact candidate on all six real fixtures. CPU FP64 checks demonstrate
+  BF16 midpoint sensitivity; more accurate arithmetic is not automatically
+  equivalent to the original rounded path.
+- `ROPE=on` is an angle-reuse ablation of `fused`.
+
+Local evidence is under `artifacts/amd/rocm10/rdna4-opt/20261025-a` in the parent
+workspace: `profile-ordered.json`, source/build hashes, frozen fixtures,
+`paired-ordered-2048`, `graph-ordered-2048`, `pv-probe`, `blas-freeze`, raw service
+requests and telemetry. These files and weights are not embedded in the runtime.
+The development bundle and wheel still require the external pinned Python/ROCm
+stack. All GPU jobs are serialized on the selected physical device.

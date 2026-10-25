@@ -491,7 +491,12 @@ class FlintModel:
                     score = torch.cat((score, sinks[:, None, None].expand(-1, count, 1)), -1)
                 probs = torch.softmax(score, -1)[..., : ak.shape[0]]
                 del score
-                if self.rdna4_pv == "ordered" and count == 1 and not self.reference:
+                if (
+                    self.rdna4_pv == "ordered"
+                    and count == 1
+                    and c["head_dim"] == 128
+                    and not self.reference
+                ):
                     from .ordered_attention import decode_pv
 
                     attention = decode_pv(probs, av, positions, window=cache.window)
