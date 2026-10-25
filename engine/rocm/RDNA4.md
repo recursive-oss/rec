@@ -7,18 +7,25 @@ unchanged. The ordinary setup is described in [README.md](README.md).
 
 ## Current experimental configuration
 
-The source/build under qualification are recorded in the workspace
-`profile-ordered.json`. The combined implementation at `e12c03e` passed seven
-frozen 128-step A/B/A cases and all three Graph cases. Small-model tests then
-identified the need to keep the original PV implementation for head dimensions
-other than 128. That guard is now explicit. A subsequent bounded wave32 tile search and ABBA
-probe selected smaller PV tiles (full 8/2/4, window 4/4/8 for D/Q/K). The final
-source requires fresh numerical/Graph gates and full HTTP, memory and sustained
-load qualification, all still in progress. Do not treat local kernel timing as an accepted service speedup.
+The smaller ordered-PV tiles (full 8/2/4, window 4/4/8 for D/Q/K) passed
+seven frozen 128-step A/B/A cases and all three Graph cases. However, the
+2048 MiB configuration later exceeded the 28 GiB device budget during mixed
+HTTP requests. A 64-recapture small-model reproducer isolated BLAS workspaces
+retained for new warmup streams: 5040 MiB net growth with the original code,
+versus 80 MiB of initial handle warmup then zero further growth with stream reuse.
+All 64 outputs in both runs matched eager execution.
+
+`GRAPH=compact` now retains one warmup stream per serial model. The unchanged
+synchronization and KV restoration still require full-model/service qualification.
+The new workspace profile is `profile-stable-stream.json`, initially testing a
+3072 MiB dense-cache budget (enough for all 3207069696 bytes of dense weights).
+Full numerical, mixed-context memory, HTTP and sustained-load gates are pending.
+Do not treat this diagnostic or previous rejected-config timings as accepted
+service results.
 
 ```bash
 export PYTORCH_ALLOC_CONF=expandable_segments:True
-export REC_DENSE_CACHE_MIB=2048
+export REC_DENSE_CACHE_MIB=3072
 export REC_RDNA4_NORM=apply
 export REC_RDNA4_ROPE=fused
 export REC_RDNA4_ATTENTION=mask
@@ -34,7 +41,7 @@ export HIPBLASLT_TUNING_OVERRIDE_FILE=/path/to/c9-family-compact.csv
 | `NORM=apply` | Retain Torch FP32 square/mean/rsqrt; fuse the following two multiplications and BF16 store. |
 | `ROPE=fused` | Share original Torch cos/sin across layers; fuse rotation with FP contraction disabled. |
 | `ATTENTION=mask` | Fuse causal/window masking and learned-sink insertion; retain QK and softmax. |
-| `GRAPH=compact` | Save/restore only slots touched by capture and warmup, including ring wrap; retain the original full snapshot as default. |
+| `GRAPH=compact` | Save/restore only slots touched by capture and warmup, including ring wrap; reuse one warmup stream per model to bound BLAS workspace retention. The default full-snapshot path is unchanged. |
 | `PREFILL=compact` | Gather active-expert inputs and unpack their weights directly into contiguous reusable workspace. Preserve BF16 BMM and stable assignment order. |
 | `PV=ordered` | For single-token decode with head dimension 128, read BF16 V directly and accumulate FP32 FMAs in ascending physical K order. Prefill retains BLAS. |
 
@@ -68,7 +75,7 @@ requires an exact `Git Version` first line and a header before every data row;
 a conventional one-header CSV was silently ineffective in earlier experiments.
 
 Against the fixed family, the candidate at `e12c03e` and subsequent frozen-c9 control
-match the preceding c9 result bitwise on 1K/8K/32K, Chinese, code, tool JSON text
+have zero measured hidden/logit relative L2 and identical greedy/routes on 1K/8K/32K, Chinese, code, tool JSON text
 and a held-out arithmetic case, each for 128 fixed teacher steps. Checks cover
 all 49 hidden outputs, logits, greedy tokens and top-6 expert IDs/order. Teachers
 are immutable, including the first valid original-c9 sequences for short cases.
@@ -103,11 +110,16 @@ quoted as service gains. Complete service gains remain pending.
   projections showed differences. A controlled 16-step model screen failed
   (max logit/hidden relative L2 3.27%/14.60%, 275 layer/step route mismatches);
   the post-control was exact. This path remains outside the engine.
+- The later 2048 MiB forward matrix completed, and fixed-shape 100-request
+  allocated growth was zero. Mixed requests then reached 28.80078125 GiB device
+  usage (42 Graph captures); the configuration was rejected and stopped cleanly.
+  Merely lowering cache to 1024 MiB was superseded by the workspace-retention
+  diagnosis. Its seven numerical cases passed; later gates were not run.
 - `ROPE=on` is an angle-reuse ablation of `fused`.
 
 Local evidence is under `artifacts/amd/rocm10/rdna4-opt/20261025-a` in the parent
-workspace: `profile-ordered.json`, source/build hashes, frozen fixtures,
-`paired-ordered-2048`, `graph-ordered-2048`, `pv-probe`, `blas-freeze`, raw service
+workspace: `profile-stable-stream.json`, source/build hashes, frozen fixtures,
+`paired-tiles-2048`, `graph-tiles-2048`, `stream-retention`, `pv-probe`, `blas-freeze`, raw service
 requests and telemetry. These files and weights are not embedded in the runtime.
 The development bundle and wheel still require the external pinned Python/ROCm
 stack. All GPU jobs are serialized on the selected physical device.

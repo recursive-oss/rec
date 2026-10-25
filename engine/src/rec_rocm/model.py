@@ -619,7 +619,15 @@ class GraphDecoder:
         model.graph_position.fill_(initial)
         model.graph_mode = True
         try:
-            warmup = torch.cuda.Stream()
+            # Torch retains BLAS workspaces per handle/stream. Repeated Graph
+            # recapture on fresh streams accumulates live workspace allocations,
+            # even after the old Graph pool is released. Serial model requests
+            # can share one warmup stream for the model's lifetime.
+            warmup = getattr(model, "_graph_warmup_stream", None) if compact else None
+            if warmup is None:
+                warmup = torch.cuda.Stream(device=model.device)
+                if compact:
+                    model._graph_warmup_stream = warmup
             warmup.wait_stream(torch.cuda.current_stream())
             with torch.cuda.stream(warmup):
                 for _ in range(2):
