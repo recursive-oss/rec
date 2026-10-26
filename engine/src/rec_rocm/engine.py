@@ -29,10 +29,11 @@ class Engine:
         implementation="blas",
     ):
         directory, manifest_path = Path(directory), Path(manifest_path)
-        device = validate_platform()
+        device, platform = validate_platform()
         self.identity = validate(directory, manifest_path)
-        if not 1 <= context_limit <= min(33536, self.identity["max_context"]):
-            raise ValueError("ROCm context limit must be between 1 and 33536")
+        limit = min(platform.max_context, self.identity["max_context"])
+        if not 1 <= context_limit <= limit:
+            raise ValueError(f"ROCm context limit must be between 1 and {limit}")
         self.context_limit = context_limit
         self.prefill_chunk = prefill_chunk
         self.use_graph = graph

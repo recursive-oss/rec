@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 
 
-def build(output):
+def build(output, max_context):
     root = Path(__file__).resolve().parents[1]
     if output.exists():
         raise ValueError(f"Output already exists: {output}")
@@ -37,7 +37,7 @@ def build(output):
         development=True,
         revision="flint-int4-3b93f905-rocm10",
         context=8192,
-        max_context=33536,
+        max_context=max_context,
         min_ram_bytes=24 * 1024**3,
     )
     manifest_path = output.with_name(output.name + ".manifest.json")
@@ -48,9 +48,10 @@ def build(output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--max-context", type=int, default=33536)
     args = parser.parse_args()
     try:
-        manifest = build(args.output.resolve())
+        manifest = build(args.output.resolve(), args.max_context)
     except ValueError as error:
         parser.error(str(error))
     print(f"Runtime: {args.output}")
