@@ -464,7 +464,6 @@ def _attention_split(
     GP: tl.constexpr,
     D: tl.constexpr,
     WINDOW: tl.constexpr,
-    SPLIT: tl.constexpr,
     SPLITS: tl.constexpr,
     TILE: tl.constexpr,
 ):
@@ -474,8 +473,10 @@ def _attention_split(
     pos = tl.load(POS)
     # A full-attention slot j only ever holds position j or -1, so slots past pos are always masked.
     extent = T if WINDOW else tl.minimum(T, pos + 1)
-    begin = split * SPLIT
-    end = tl.minimum(begin + SPLIT, extent)
+    # Split the live extent (read on device, so it follows graph replays) evenly across SPLITS programs.
+    span = tl.cdiv(tl.cdiv(extent, TILE), SPLITS) * TILE
+    begin = split * span
+    end = tl.minimum(begin + span, extent)
     g = tl.arange(0, GP)
     d = tl.arange(0, D)
     q = tl.load(Q + (kv * G + g[:, None]) * D + d[None, :], g[:, None] < G, 0)
@@ -551,7 +552,7 @@ def _attention_merge(
     tl.store(OUT + head * D + d, out.to(OUT.dtype.element_ty))
 
 
-_ATTENTION_CONFIG = (512, 32, 4)  # slots per split, slots per tile, warps
+_ATTENTION_CONFIG = (24, 16, 4)  # splits per KV head, slots per tile, warps
 
 
 def sink_attention(q, key, value, positions, kpositions, sinks, window=None, config=None):
@@ -559,8 +560,7 @@ def sink_attention(q, key, value, positions, kpositions, sinks, window=None, con
     _, heads, dim = q.shape
     slots, kv_heads, _ = key.shape
     group = heads // kv_heads
-    split, tile, warps = config or _ATTENTION_CONFIG
-    splits = tr.cdiv(slots, split)
+    splits, tile, warps = config or _ATTENTION_CONFIG
     gp = max(16, tr.next_power_of_2(group))
     part_m = torch.empty((kv_heads, splits, gp), device=q.device, dtype=torch.float32)
     part_l = torch.empty_like(part_m)
@@ -581,7 +581,6 @@ def sink_attention(q, key, value, positions, kpositions, sinks, window=None, con
         gp,
         dim,
         window or 0,
-        split,
         splits,
         tile,
         num_warps=warps,
