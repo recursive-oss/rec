@@ -5,23 +5,58 @@ Linux/ROCm Flint backend. Every engine option defaults to `off`. The checkpoint,
 BF16 activation/KV formats, router ordering, grammar and sampling contract remain
 unchanged. The ordinary setup is described in [README.md](README.md).
 
-## Current experimental configuration
+## Implemented configuration and validation
 
-The smaller ordered-PV tiles (full 8/2/4, window 4/4/8 for D/Q/K) passed
-seven frozen 128-step A/B/A cases and all three Graph cases. However, the
-2048 MiB configuration later exceeded the 28 GiB device budget during mixed
-HTTP requests. A 64-recapture small-model reproducer isolated BLAS workspaces
-retained for new warmup streams: 5040 MiB net growth with the original code,
-versus 80 MiB of initial handle warmup then zero further growth with stream reuse.
-All 64 outputs in both runs matched eager execution.
+Compute revision `5c15ba0` completed 29 enabled tests and 29 fallback tests,
+seven frozen 128-step A/B/A cases, and all three 128-step Graph cases. Measured
+hidden/logit relative L2 was zero; greedy tokens and expert IDs/order matched.
+All 60 full-output candidate HTTP measurements (forward and reverse) matched
+the frozen original references. This is a bounded claim for the pinned runtime
+and exercised inputs, not arbitrary-input or cross-version equivalence.
 
-`GRAPH=compact` now retains one warmup stream per serial model. The unchanged
-synchronization and KV restoration still require full-model/service qualification.
-The new workspace profile is `profile-stable-stream.json`, initially testing a
-3072 MiB dense-cache budget (enough for all 3207069696 bytes of dense weights).
-Full numerical, mixed-context memory, HTTP and sustained-load gates are pending.
-Do not treat this diagnostic or previous rejected-config timings as accepted
-service results.
+| Context / output | Original forward token/s | Candidate forward token/s | New llama.cpp token/s |
+| --- | ---: | ---: | ---: |
+| 1024 / 1024 | 25.908 | 36.867 | 75.604 |
+| 8192 / 1024 | 15.306 | 29.872 | 70.910 |
+| 32768 / 512 | 10.765 | 18.578 | 51.727 |
+
+Each group used two warmups and five full measurements, cold prefix and warm
+model/JIT. rec uses default Flint grammar; llama uses none and a different GGUF
+representation, so it is an engineering reference, not a numerical oracle.
+Candidate reverse medians were 33.156/29.540/18.870 token/s. The forward gain
+includes the fixed BLAS table and allocator settings as well as kernel changes.
+All valid slow samples are retained.
+
+The candidate completed 60.22 minutes, 324 mixed requests, 14 protocol rounds and
+316 Graph captures. Allocated growth over 100 fixed-shape requests was zero.
+Observed device peak was 27.5625 GiB; peak reserved was 26.84375 GiB; observed free minimum was
+4.296875 GiB. Maximum per-request nonempty-SSE gap p95 was 89.17 ms. Device
+sampling is every 10 seconds plus request-end observations, not an instantaneous
+bound. Kernel reset logs were unavailable. Built Go-manager readiness, default
+grammar chat, extracted-source hashes and clean stop passed; the full performance
+matrix used the identical Python source. Temporary manager state was removed.
+
+The original uncontrolled reverse 1K run diverged at the 19th token in all 14 requests.
+It remains a failed validation. A separate fixed-BLAS original control matched
+all 30 full outputs, but its 1K/8K windows included three observations of another
+GPU2 process. Those windows are exploratory and do not qualify exclusive-card
+performance. The candidate lifetimes, original forward, new llama and 32K control
+had no observed second GPU owner; this does not prove continuous isolation or
+exclusive host CPU resources. M1/M2/M3 all remain unmet, and the original reverse
+and whole-batch exclusivity gates remain failed. No default optimization is enabled.
+
+The 2048 MiB predecessor exceeded the device budget during mixed requests.
+A 64-recapture reproducer isolated retained BLAS workspaces: original warmup
+streams grew 5040 MiB, while stream reuse grew 80 MiB initially and zero thereafter.
+All 64 outputs in each run matched eager. `GRAPH=compact` now retains one warmup
+stream per serial model while preserving synchronization and KV restoration;
+the sustained full-model check above validates the integrated fix. Production
+code never calls the private workspace-clear diagnostic API.
+
+The 3072 MiB budget holds all 3207069696 bytes of dense weights, equal to the
+original's actual cache. Lowering the budget number did not remove dense weights.
+The final profile is `profile-stable-stream.json`; the controlled original recovery
+is recorded separately in `profile-stable-stream-controlled-reverse.json`.
 
 ```bash
 export PYTORCH_ALLOC_CONF=expandable_segments:True
@@ -74,7 +109,7 @@ all heuristic variation has not been fully explained. In this library the CSV
 requires an exact `Git Version` first line and a header before every data row;
 a conventional one-header CSV was silently ineffective in earlier experiments.
 
-Against the fixed family, the candidate at `e12c03e` and subsequent frozen-c9 control
+Against the fixed family, the candidate at `5c15ba0` and subsequent frozen-c9 control
 have zero measured hidden/logit relative L2 and identical greedy/routes on 1K/8K/32K, Chinese, code, tool JSON text
 and a held-out arithmetic case, each for 128 fixed teacher steps. Checks cover
 all 49 hidden outputs, logits, greedy tokens and top-6 expert IDs/order. Teachers
@@ -89,7 +124,7 @@ from this path. Independent CPU arithmetic and Graph position-change tests
 exercise the integrated implementation. The smaller tiles then passed five ABBA rounds against the integrated first
 version, improving isolated PV by 1.19x for the window and 1.43–1.47x for full
 attention. These ratios must not be multiplied into earlier benchmarks or
-quoted as service gains. Complete service gains remain pending.
+quoted as service gains. HTTP outcomes and their limitations are recorded above.
 
 ## Prior rejected configurations and research paths
 
@@ -119,7 +154,9 @@ quoted as service gains. Complete service gains remain pending.
 
 Local evidence is under `artifacts/amd/rocm10/rdna4-opt/20261025-a` in the parent
 workspace: `profile-stable-stream.json`, source/build hashes, frozen fixtures,
-`paired-tiles-2048`, `graph-tiles-2048`, `stream-retention`, `pv-probe`, `blas-freeze`, raw service
+`paired-stable-stream`, `graph-stable-stream`, `http-stable-stream`,
+`http-host-profile`, `stream-retention`, `pv-probe`, `blas-freeze`, raw service
 requests and telemetry. These files and weights are not embedded in the runtime.
 The development bundle and wheel still require the external pinned Python/ROCm
-stack. All GPU jobs are serialized on the selected physical device.
+stack. All jobs in this run were serialized on the selected physical device;
+the observed external jobs are recorded separately above.
