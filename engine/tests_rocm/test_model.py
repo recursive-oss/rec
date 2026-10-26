@@ -189,6 +189,7 @@ class SmallFlint(unittest.TestCase):
             return original_mlp(x, path, ids, layout)
 
         model.norm, model.mlp = norm, mlp
+        model.gfx1151_decode = "off"  # the patches above target the eager path
         with patch("torch.nn.functional.linear", linear):
             model.forward(torch.tensor([17], device="cuda"), trace=True)
         probabilities = 1 / (1 + np.exp(-controlled))

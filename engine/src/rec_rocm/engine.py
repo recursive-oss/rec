@@ -60,6 +60,11 @@ class Engine:
                 name: getattr(self.model, "rdna4_" + name)
                 for name in ("expert", "attention", "prefill", "norm", "rope", "graph", "pv")
             },
+            "gfx1151_options": {
+                "decode": self.model.gfx1151_decode,
+                "attention": self.model.gfx1151_attention,
+                "prefill": self.model.gfx1151_prefill,
+            },
             "dense_cache_bytes": sum(
                 t.numel() * t.element_size() for t in self.model.dense_cache.values()
             ),
