@@ -91,11 +91,25 @@ func run(args []string) error {
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	manifest := flags.String("manifest", "", "")
 	runtimeDir := flags.String("runtime-dir", "", "")
+	quant := flags.String("quant", QuantInt4, "")
 	var contextTokens int
+	var tempVal float64
+	var presenceVal float64
+	var repeatVal float64
+	var tempPtr *float64
+	var presencePtr *float64
+	var repeatPtr *float64
 	port := 11500
+	host := "127.0.0.1"
 	if command == "serve" {
 		flags.IntVar(&contextTokens, "context", 0, "")
 		flags.IntVar(&port, "port", port, "")
+		flags.StringVar(&host, "host", host, "")
+		flags.Float64Var(&tempVal, "temperature", 1.0, "")
+		flags.Float64Var(&presenceVal, "presence-penalty", 0.0, "")
+		flags.Float64Var(&repeatVal, "repeat-penalty", 1.0, "")
+		flags.Float64Var(&repeatVal, "repeat_penalty", 1.0, "")
+		flags.Float64Var(&repeatVal, "repetition-penalty", 1.0, "")
 	}
 	flags.SetOutput(io.Discard)
 	if e := flags.Parse(rest); e != nil {
@@ -107,13 +121,35 @@ func run(args []string) error {
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("port must be between 1 and 65535")
 	}
-	m, e := loadManifest(*manifest)
+	normalizedQuant, quantErr := validateQuant(*quant)
+	if quantErr != nil {
+		return quantErr
+	}
+	m, e := loadManifest(*manifest, normalizedQuant)
 	if e == nil && command == "serve" {
 		flags.Visit(func(f *flag.Flag) {
 			if f.Name == "context" {
 				m, e = withContext(m, contextTokens)
 			}
+			if f.Name == "temperature" {
+				tempPtr = &tempVal
+			}
+			if f.Name == "presence-penalty" {
+				presencePtr = &presenceVal
+			}
+			if f.Name == "repeat-penalty" || f.Name == "repeat_penalty" || f.Name == "repetition-penalty" {
+				repeatPtr = &repeatVal
+			}
 		})
+	}
+	if tempPtr != nil && (*tempPtr < 0 || *tempPtr > 2) {
+		return fmt.Errorf("temperature must be between 0 and 2")
+	}
+	if presencePtr != nil && (*presencePtr < -2 || *presencePtr > 2) {
+		return fmt.Errorf("presence-penalty must be between -2 and 2")
+	}
+	if repeatPtr != nil && (*repeatPtr <= 0 || *repeatPtr > 5) {
+		return fmt.Errorf("repeat-penalty must be greater than 0 and at most 5")
 	}
 	if command == "doctor" {
 		return doctor(p, m, e)
@@ -139,7 +175,7 @@ func run(args []string) error {
 		}
 		return e
 	}
-	return serve(ctx, p, m, *runtimeDir, port, os.Stderr, background)
+	return serve(ctx, p, m, *runtimeDir, host, port, tempPtr, presencePtr, repeatPtr, os.Stderr, background)
 }
 
 func doctor(p Paths, m Manifest, manifestErr error) error {

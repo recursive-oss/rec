@@ -18,20 +18,45 @@ class QATModel:
 
     def __init__(self, directory):
         self.config = json.loads((directory / "config.json").read_text())
-        export = self.config["mlx_export"]
-        assert export["bits"] == 4 and export["routed_expert_bits"] in (3, 4)
+        q_cfg = self.config.get("quantization", {})
+        default_bits = q_cfg.get("bits", 4)
+        default_group_size = q_cfg.get("group_size", 64)
+
+        routed_bits = default_bits
+        for k, v in q_cfg.items():
+            if isinstance(v, dict) and "bits" in v and "switch_mlp" in k:
+                routed_bits = v["bits"]
+                break
+
+        export = self.config.get("mlx_export", {
+            "bits": default_bits,
+            "routed_expert_bits": routed_bits,
+            "embedding_bits": 8,
+        })
+        self.config["mlx_export"] = export
+        assert export["bits"] in (4, 6, 8) and export["routed_expert_bits"] in (3, 4, 6)
         assert export["embedding_bits"] == 8
         native = Model(ModelArgs.from_dict(self.config))
 
         def quantization(path, module):
             if not hasattr(module, "to_quantized"):
                 return False
-            bits = 4
+            lookup = path
+            if lookup not in q_cfg and f"language_model.{lookup}" in q_cfg:
+                lookup = f"language_model.{lookup}"
+            if lookup in q_cfg and isinstance(q_cfg[lookup], dict):
+                spec = q_cfg[lookup]
+                return {
+                    "group_size": spec.get("group_size", default_group_size),
+                    "bits": spec.get("bits", default_bits),
+                    "mode": "affine",
+                }
+            bits = export["bits"]
             if path == "model.embed_tokens":
                 bits = 8
             elif ".switch_mlp." in path:
                 bits = export["routed_expert_bits"]
-            return {"group_size": 64, "bits": bits, "mode": "affine"}
+            return {"group_size": default_group_size, "bits": bits, "mode": "affine"}
 
         nn.quantize(native, class_predicate=quantization)
         weights = {}
@@ -144,6 +169,7 @@ class QATSession:
                 state["kv"].write(index, 0, keys, values)
         state["capacity"] = state["kv"].capacity
         state["position"] = state["initial"] = len(tokens)
+        state["cache"] = cache
         self._state = state
         return logits
 

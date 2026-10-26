@@ -92,6 +92,19 @@ class Engine:
 
 
 class ServingTest(unittest.TestCase):
+    def test_server_binds_the_requested_address(self):
+        server = make_server(Engine(), ("0.0.0.0", 0), Path(self.temp.name) / "metrics-bind")
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            self.assertEqual(server.socket.getsockname()[0], "0.0.0.0")
+        finally:
+            server.shutdown()
+            server.generator.cancel()
+            server.generator.join()
+            server.server_close()
+            thread.join()
+
     def test_idle_preparation_follows_response_and_yields_to_queued_request(self):
         preparing = threading.Event()
         proceed = threading.Event()

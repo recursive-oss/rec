@@ -108,6 +108,7 @@ def seeded_tool_parser(sampling, prompt_tokens):
             "top_p": float(sampling.top_p),
             "top_k": sampling.top_k,
             "presence_penalty": float(sampling.presence_penalty),
+            "repetition_penalty": float(getattr(sampling, "repetition_penalty", 1.0)),
             "max_tokens": sampling.max_tokens,
         },
         separators=(",", ":"),

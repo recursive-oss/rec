@@ -27,9 +27,10 @@ class Sampling:
     max_tokens: int = 1024
     seed: int = 0
     presence_penalty: float = 0.0
+    repetition_penalty: float = 1.0
 
     def __post_init__(self):
-        for name in ("temperature", "top_p", "presence_penalty"):
+        for name in ("temperature", "top_p", "presence_penalty", "repetition_penalty"):
             if type(getattr(self, name)) not in (int, float):
                 raise ValueError(f"{name} must be a number")
         for name in ("top_k", "max_tokens", "seed"):
@@ -39,6 +40,8 @@ class Sampling:
             raise ValueError("temperature must be in [0, 2] and top_p in (0, 1]")
         if not -2 <= self.presence_penalty <= 2:
             raise ValueError("presence_penalty must be in [-2, 2]")
+        if not 0 < self.repetition_penalty <= 5:
+            raise ValueError("repetition_penalty must be in (0, 5]")
         if self.top_k < 0 or self.max_tokens < 1:
             raise ValueError("top_k must be nonnegative and max_tokens positive")
         if not 0 <= self.seed <= 2**64 - self.max_tokens:
@@ -57,13 +60,14 @@ class Engine:
         if platform.system() != "Darwin" or platform.machine() != "arm64":
             raise RuntimeError("Flint requires an Apple Silicon Mac")
         memory = int(subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True))
-        if memory < 48 * 1024**3:
-            raise RuntimeError("This build targets Macs with at least 48 GiB of memory")
+        self.identity = validate(directory, manifest_path)
+        min_memory = 64 * 1024**3 if self.identity.get("weight_format") == "mlx-affine-int6" else 48 * 1024**3
+        if memory < min_memory:
+            raise RuntimeError(f"This model requires a Mac with at least {min_memory >> 30} GiB of memory; detected {memory >> 30} GiB")
         import mlx.core as mx
 
         device = mx.device_info()
         profile = profile_for_device(device)
-        self.identity = validate(directory, manifest_path)
         config = json.loads((directory / "config.json").read_text())
         from .kernels import build_decoder
         from .quantized import QATModel
@@ -87,7 +91,12 @@ class Engine:
         mx.set_cache_limit(0)
         mx.clear_cache()
         mx.reset_peak_memory()
-        self.runtime, self.resident_sampler = build_decoder(QATModel(directory), optimized=True)
+        if self.identity.get("weight_format") == "mlx-affine-int6":
+            from .native_engine import build_native_decoder
+
+            self.runtime, self.resident_sampler = build_native_decoder(QATModel(directory))
+        else:
+            self.runtime, self.resident_sampler = build_decoder(QATModel(directory), optimized=True)
         # Packing replaces native weights with lazy views. Materialize them on their creation
         # stream before HTTP threads use the native prefill model.
         mx.eval(self.runtime.model.native.parameters())
@@ -264,6 +273,8 @@ class Engine:
             text_stream = StreamingText(self.tokenizer)
             if sampling.presence_penalty:
                 session._state["presence_mask"] = mx.zeros(logits.size, mx.float32)
+            if sampling.repetition_penalty != 1.0:
+                session._state["recent_tokens"] = list(ids[-64:])
             mx.eval(logits)
             if self.runtime.device_profile.chip == "M4 Max":
                 from .kernels.filtered_sampling import make_sampler
@@ -295,6 +306,7 @@ class Engine:
                             top_p=sampling.top_p,
                             top_k=sampling.top_k,
                             presence_penalty=sampling.presence_penalty,
+                            repetition_penalty=sampling.repetition_penalty,
                             grammar=grammar,
                             **options,
                         )
@@ -304,6 +316,14 @@ class Engine:
                     if not bool(mx.all(mx.isfinite(logits)).item()):
                         raise FloatingPointError("The inference engine produced nonfinite logits")
                     flat = logits.reshape(-1).astype(mx.float32)
+                    if sampling.repetition_penalty != 1.0 and session._state.get("recent_tokens"):
+                        indices = mx.array(list(dict.fromkeys(session._state["recent_tokens"][-64:])))
+                        selected = flat[indices]
+                        flat[indices] = mx.where(
+                            selected < 0,
+                            selected * sampling.repetition_penalty,
+                            selected / sampling.repetition_penalty,
+                        )
                     if grammar is not None:
                         flat = grammar.first_logits(flat)
                     if sampling.temperature == 0:
@@ -323,6 +343,8 @@ class Engine:
                     computed_tokens += 1
                     if sampling.presence_penalty:
                         session._state["presence_mask"][token] = 1.0
+                    if "recent_tokens" in session._state:
+                        session._state["recent_tokens"].append(token)
                 if first is None:
                     first = time.perf_counter()
                 generated.append(token)
@@ -385,7 +407,9 @@ class Engine:
                     "peak_mlx_bytes": mx.get_peak_memory(),
                     "process_peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
                     "computed_tokens": computed_tokens,
-                    "decode_strategy": "resident_sampling",
+                    "decode_strategy": "native_sampling"
+                    if self.identity.get("weight_format") == "mlx-affine-int6"
+                    else "resident_sampling",
                     **(grammar.metrics() if grammar is not None else {}),
                 },
             }

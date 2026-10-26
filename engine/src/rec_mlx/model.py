@@ -333,6 +333,10 @@ class Model(nn.Module):
     def sanitize(self, weights: dict[str, Any]) -> dict[str, Any]:
         out = {}
         for key, value in weights.items():
+            if key.startswith("language_model."):
+                key = key[len("language_model.") :]
+            if key.endswith(".mlp.expert_bias"):
+                key = key.replace(".mlp.expert_bias", ".mlp.gate.expert_bias")
             if key.endswith(".self_attn.softmax_offset"):
                 value = value.astype(mx.float32)
             elif key.endswith(".weight") and value.dtype == mx.uint8:

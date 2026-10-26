@@ -1,0 +1,94 @@
+{
+  "schema": 1,
+  "model": "flint",
+  "revision": "flint-int6",
+  "development": false,
+  "engine": "mlx",
+  "os": "darwin",
+  "arch": "arm64",
+  "backend": "metal",
+  "context": 262144,
+  "max_context": 262144,
+  "min_ram_bytes": 68719476736,
+  "entry": "config.json",
+  "files": [
+    {
+      "name": "chat_template.jinja",
+      "url": "https://huggingface.co/chimpanzeetaxidriver/flint-oQ6e/resolve/1504c5802a33e69337075a0f46895b9a9c9a32e8/chat_template.jinja",
+      "size": 2328,
+      "sha256": "7940f4ffa3275c36caa4a582f845aaad79da11018b3961e8fbcad6ae29733466"
+    },
+    {
+      "name": "config.json",
+      "url": "https://huggingface.co/chimpanzeetaxidriver/flint-oQ6e/resolve/1504c5802a33e69337075a0f46895b9a9c9a32e8/config.json",
+      "size": 93877,
+      "sha256": "b6b94f77e664c8016e97308e488f37807b41f4a96779594f5e57e8aa25093ed7"
+    },
+    {
+      "name": "generation_config.json",
+      "url": "https://huggingface.co/chimpanzeetaxidriver/flint-oQ6e/resolve/1504c5802a33e69337075a0f46895b9a9c9a32e8/generation_config.json",
+      "size": 202,
+      "sha256": "a499c71895e008abd572558a5ad5904feaed92cf2a3b6e2cb0e9cabf03b96ed3"
+    },
+    {
+      "name": "model-00001-of-00007.safetensors",
+      "url": "https://huggingface.co/chimpanzeetaxidriver/flint-oQ6e/resolve/1504c5802a33e69337075a0f46895b9a9c9a32e8/model-00001-of-00007.safetensors",
+      "size": 5124583742,
+      "sha256": "3bf6e441093aa552fbb17c54446da33cc0fff22ec85d55ab696d7fdb8ac6e741"
+    },
+    {
+      "name": "model-00002-of-00007.safetensors",
+      "url": "https://huggingface.co/chimpanzeetaxidriver/flint-oQ6e/resolve/1504c5802a33e69337075a0f46895b9a9c9a32e8/model-00002-of-00007.safetensors",
+      "size": 5016402320,
+      "sha256": "215166b13a86412d7f26e81ebf9c1c985b1a606d6dae0df218ca3f50d3baa506"
+    },
+    {
+      "name": "model-00003-of-00007.safetensors",
+      "url": "https://huggingface.co/chimpanzeetaxidriver/flint-oQ6e/resolve/1504c5802a33e69337075a0f46895b9a9c9a32e8/model-00003-of-00007.safetensors",
+      "size": 5016401767,
+      "sha256": "46587824007ee48432ad17cdb930dc2fa1bbce801d1320d58ed4ed69d742b30a"
+    },
+    {
+      "name": "model-00004-of-00007.safetensors",
+      "url": "https://huggingface.co/chimpanzeetaxidriver/flint-oQ6e/resolve/1504c5802a33e69337075a0f46895b9a9c9a32e8/model-00004-of-00007.safetensors",
+      "size": 5016402370,
+      "sha256": "8cd7221b042f9b17fa472992c6442eaa950f1420c462cb5c3c10d2c81537408a"
+    },
+    {
+      "name": "model-00005-of-00007.safetensors",
+      "url": "https://huggingface.co/chimpanzeetaxidriver/flint-oQ6e/resolve/1504c5802a33e69337075a0f46895b9a9c9a32e8/model-00005-of-00007.safetensors",
+      "size": 5016402388,
+      "sha256": "ed0f1b4c95dfd7c6129b24a3d90e984bfadd0d9beeafaa667878ca62b65a9485"
+    },
+    {
+      "name": "model-00006-of-00007.safetensors",
+      "url": "https://huggingface.co/chimpanzeetaxidriver/flint-oQ6e/resolve/1504c5802a33e69337075a0f46895b9a9c9a32e8/model-00006-of-00007.safetensors",
+      "size": 5016401751,
+      "sha256": "b5d4d759f943040b93464d62f2b4a52eaa0e43b9448792f718e7e129126569b2"
+    },
+    {
+      "name": "model-00007-of-00007.safetensors",
+      "url": "https://huggingface.co/chimpanzeetaxidriver/flint-oQ6e/resolve/1504c5802a33e69337075a0f46895b9a9c9a32e8/model-00007-of-00007.safetensors",
+      "size": 2617253931,
+      "sha256": "47f8ba4eb02d499448508a67dd6168e71e3a582b20782294ba548b348175f99d"
+    },
+    {
+      "name": "model.safetensors.index.json",
+      "url": "https://huggingface.co/chimpanzeetaxidriver/flint-oQ6e/resolve/1504c5802a33e69337075a0f46895b9a9c9a32e8/model.safetensors.index.json",
+      "size": 182839,
+      "sha256": "d5c00c73cc7f5d0207da0b7fd74cefdbd161567b207dcce67906a82679334c5a"
+    },
+    {
+      "name": "tokenizer.json",
+      "url": "https://huggingface.co/chimpanzeetaxidriver/flint-oQ6e/resolve/1504c5802a33e69337075a0f46895b9a9c9a32e8/tokenizer.json",
+      "size": 10879128,
+      "sha256": "a263cce0b7e2b03f7ee07ce809783ef4b47f160c3f268a4ea1524f638da45b68"
+    },
+    {
+      "name": "tokenizer_config.json",
+      "url": "https://huggingface.co/chimpanzeetaxidriver/flint-oQ6e/resolve/1504c5802a33e69337075a0f46895b9a9c9a32e8/tokenizer_config.json",
+      "size": 30439,
+      "sha256": "159ac88217e90ffd0a4a294726048bb302829e82e1958dc85bb203aa79138fbf"
+    }
+  ]
+}

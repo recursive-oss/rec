@@ -33,7 +33,12 @@ def main():
         help="total input and output tokens (default: %(default)s)",
     )
     parser.add_argument(
-        "--port", type=int, default=8080, help="loopback port for serve (default: %(default)s)"
+        "--port", type=int, default=8080, help="port for serve (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="interface for the serve HTTP server to bind (default: %(default)s)",
     )
     parser.add_argument(
         "--grammar",
@@ -59,6 +64,21 @@ def main():
         type=float,
         default=1.0,
         help="default sampling temperature (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--presence-penalty",
+        type=float,
+        default=0.0,
+        help="default presence penalty (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--repeat-penalty",
+        "--repeat_penalty",
+        "--repetition-penalty",
+        type=float,
+        default=1.0,
+        dest="repetition_penalty",
+        help="default repetition penalty (default: %(default)s)",
     )
     parser.add_argument(
         "--top-p",
@@ -88,6 +108,8 @@ def main():
             temperature=args.temperature,
             top_p=args.top_p,
             top_k=args.top_k,
+            presence_penalty=args.presence_penalty,
+            repetition_penalty=args.repetition_penalty,
             max_tokens=args.max_tokens,
         )
     except ValueError as error:
@@ -123,13 +145,13 @@ def main():
 
         server = make_server(
             engine,
-            ("127.0.0.1", args.port),
+            (args.host, args.port),
             args.metrics,
             defaults=settings,
             api_key=api_key,
             grammar_mode=args.grammar,
         )
-        print(f"Listening on http://127.0.0.1:{server.server_port}/v1", flush=True)
+        print(f"Listening on http://{args.host}:{server.server_port}/v1", flush=True)
 
         def stop(signum, frame):
             server.generator.cancel()

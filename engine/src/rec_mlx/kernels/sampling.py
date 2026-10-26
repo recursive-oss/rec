@@ -70,6 +70,7 @@ if(stop)break;
         top_p=1.0,
         top_k=0,
         presence_penalty=0.0,
+        repetition_penalty=1.0,
         grammar=None,
         logprobs=None,
     ):
