@@ -43,6 +43,35 @@ curl -fsSL https://raw.githubusercontent.com/recursive-oss/rec/main/install.sh |
 This installs `rec` in `~/.local/bin` and adds it to your PATH for new
 terminals. All other data lives under `~/.local/share/rec`.
 
+### Native AMD/HIP development package
+
+The native HIP target currently requires Linux/amd64, a ROCm installation,
+and a locally persisted, verified Flint checkpoint. It does not download or
+copy the checkpoint. Build `flint-serve`, then stage and package it with:
+
+```bash
+python3 packaging/build-flint-runtime.py \
+  --flint-serve /path/to/flint-serve \
+  --output /path/to/flint-runtime
+python3 packaging/package.py \
+  --runtime-dir /path/to/flint-runtime \
+  --manifest packaging/flint-int4-hip.json \
+  --version VERSION \
+  --output /path/to/rec
+```
+
+Start the packaged binary against the persistent checkpoint directory:
+
+```bash
+/path/to/rec serve flint \
+  --model-dir /path/to/flint-int4 \
+  --context 4096
+```
+
+The HIP target currently serves the OpenAI-compatible endpoint. Anthropic
+Messages support remains specific to the MLX runtime until native support is
+implemented.
+
 
 ## Usage
 
@@ -99,17 +128,19 @@ sessions; remove those variables to keep yours.
 To send a request directly to the OpenAI-compatible API:
 
 ```bash
-curl -fsS http://127.0.0.1:11500/v1/chat/completions \
-  -H "Authorization: Bearer $(rec auth token)" \
+read -r REC_TOKEN < <(rec auth token)
+printf 'header = "Authorization: Bearer %s"\n' "$REC_TOKEN" | \
+curl --config - -fsS http://127.0.0.1:11500/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"flint","messages":[{"role":"user","content":"Say hello."}],"max_tokens":128}'
+unset REC_TOKEN
 ```
 
 The response contains generated text in `choices`. For other clients, use
 base URL `http://127.0.0.1:11500/v1`, model `flint`, and the API key from
 `rec auth token`.
 
-The Anthropic-compatible API is available at
+For the MLX runtime, the Anthropic-compatible API is available at
 `http://127.0.0.1:11500/v1/messages`. Point `ANTHROPIC_BASE_URL` at
 `http://127.0.0.1:11500` and send the token from `rec auth token` as a bearer
 token or as `x-api-key`. The model is `flint`.
