@@ -56,4 +56,28 @@ with tempfile.TemporaryDirectory(prefix="rec-package-test-") as td:
             subprocess.check_output([str(output), "--version"], text=True).strip()
             == "rec 0.1.0-test"
         )
+    fake_flint = work / "source-flint-serve"
+    fake_flint.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = --help ]; then echo 'flint-serve --checkpoint-dir'; exit 0; fi\n"
+        "exit 1\n"
+    )
+    fake_flint.chmod(0o755)
+    hip_runtime = work / "hip-runtime"
+    subprocess.run(
+        [sys.executable, str(root / "packaging/build-flint-runtime.py"),
+         "--flint-serve", str(fake_flint), "--output", str(hip_runtime)],
+        check=True,
+    )
+    identity = json.loads((hip_runtime / "build.json").read_text())
+    assert identity == {"engine": "flint-native", "os": "linux", "arch": "amd64", "backend": "hip"}
+    assert (hip_runtime / "flint-serve").stat().st_mode & 0o111
+    bad = work / "flint-link"
+    bad.symlink_to(fake_flint)
+    rejected = subprocess.run(
+        [sys.executable, str(root / "packaging/build-flint-runtime.py"),
+         "--flint-serve", str(bad), "--output", str(work / "bad-runtime")],
+        capture_output=True, text=True,
+    )
+    assert rejected.returncode != 0 and "symlink" in rejected.stderr, rejected.stderr
     print("Packaging, archive validation and runtime/manifest mismatch rejection passed")

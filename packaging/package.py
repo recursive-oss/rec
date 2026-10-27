@@ -57,7 +57,7 @@ def main():
         "--runtime-dir",
         type=Path,
         required=True,
-        help="runtime directory from packaging/build-mlx-runtime.py",
+        help="prebuilt runtime directory matching the manifest target",
     )
     p.add_argument(
         "--manifest",
