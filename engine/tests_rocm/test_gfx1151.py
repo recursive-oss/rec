@@ -296,5 +296,136 @@ class FusedGemv(unittest.TestCase):
         self.assertLess(wrong, 0.97)
 
 
+@unittest.skipUnless(IS_GFX1151, "quantized KV kernels are qualified only on gfx1151")
+class QuantizedKV(unittest.TestCase):
+    def test_quantize_follows_the_mlx_metal_rule(self):
+        # All-negative group: the range still reaches zero, so scale = 15 / 15 and bias = -15;
+        # ties round away from zero (12.5 -> 3 and 14.5 -> 15, not 2 and 14).
+        x = torch.full((1, 64), -15.0, device="cuda")
+        x[0, 1], x[0, 2] = -12.5, -0.5
+        codes, scale, bias = g.kv_quantize(torch.cat((x, x), 1).bfloat16(), 4)
+        low = (codes & 15)[0]
+        self.assertEqual(low[:3].tolist(), [0, 3, 15])
+        self.assertEqual(scale.tolist(), [[1.0, 1.0]])
+        self.assertEqual(bias.tolist(), [[-15.0, -15.0]])
+        for value in (0.0, 0.37):
+            x = torch.full((2, 128), value, device="cuda").bfloat16()
+            for bits in (8, 4):
+                with self.subTest(value=value, bits=bits):
+                    restored = g.kv_dequantize(*g.kv_quantize(x, bits), bits)
+                    self.assertTrue(torch.equal(restored, x.float()))
+
+    def test_fused_cache_write_matches_the_torch_quantizer(self):
+        from rec_rocm.model import LayerCache
+
+        gen = torch.Generator(device="cuda").manual_seed(0)
+        heads, kv_heads, dim = 32, 4, 128
+        for trial in range(64):
+            qkv = torch.randn(1, (heads + 2 * kv_heads) * dim, device="cuda", generator=gen)
+            values = qkv[:, (heads + kv_heads) * dim :]
+            if trial % 4 == 1:
+                values.copy_(-values.abs() - 0.01)
+            if trial % 4 == 2:
+                values[:, :64] = 0
+            qkv = (qkv * (1 + 3 * trial / 64)).bfloat16()
+            qw = (torch.rand(dim, device="cuda", generator=gen) + 0.5).bfloat16()
+            kw = (torch.rand(dim, device="cuda", generator=gen) + 0.5).bfloat16()
+            pos = torch.tensor([trial * 7 % 300], device="cuda", dtype=torch.int32)
+            angle = pos.float()[:, None] * 1e4 ** (-torch.arange(64, device="cuda") / 64)
+            rotation = (angle.cos().flatten(), angle.sin().flatten()) if trial % 3 else None
+            plain = LayerCache(512, kv_heads, dim)
+            quant = LayerCache(512, kv_heads, dim, quantized=True)
+            for cache in (plain, quant):
+                g.qk_post(qkv, qw, kw, rotation, cache, pos, 1e-6, heads, kv_heads, dim)
+            s = int(pos)
+            want = (*g.kv_quantize(plain.key[s], 8), *g.kv_quantize(plain.value[s], 4))
+            got = [t[s] for t in quant.tensors if t is not quant.positions]
+            got = [got[i] for i in (0, 2, 3, 1, 4, 5)]  # key, scale, bias, value, scale, bias
+            for a, b in zip(got, want, strict=True):
+                self.assertTrue(torch.equal(a, b), f"trial {trial}")
+
+    def filled(self, slots, pos, seed=0, scale=1.0):
+        from rec_rocm.model import LayerCache
+
+        gen = torch.Generator(device="cuda").manual_seed(seed)
+        cache = LayerCache(slots, 4, 128, quantized=True)
+        keys = (torch.randn(pos + 1, 4, 128, device="cuda", generator=gen) * scale).bfloat16()
+        values = torch.randn(pos + 1, 4, 128, device="cuda", generator=gen).bfloat16()
+        cache.update(keys, values, torch.arange(pos + 1, device="cuda", dtype=torch.int32))
+        q = (torch.randn(1, 32, 128, device="cuda", generator=gen) * 2).bfloat16()
+        sinks = torch.randn(32, device="cuda", generator=gen).bfloat16()
+        return cache, q, sinks
+
+    def eager(self, q, cache, slots, pos, sinks, dtype):
+        """The decode composition on dequantized K/V: FP32 (or FP64) scores, softmax and PV."""
+        ak, av = cache.dense(slots, dtype)
+        score = torch.einsum("mkhd,nkd->khmn", q.to(dtype).view(1, 4, 8, 128), ak).reshape(
+            32, 1, -1
+        )
+        ap = cache.positions[:slots]
+        score = score.masked_fill(~((ap >= 0) & (ap <= pos))[None, None], -float("inf"))
+        score = torch.cat((score / 128**0.5, sinks.to(dtype)[:, None, None]), -1)
+        probs = torch.softmax(score, -1)[..., :slots]
+        return torch.einsum("khmn,nkd->mkhd", probs.view(4, 8, 1, -1), av).reshape(1, 32, 128)
+
+    def test_quantized_attention_matches_the_eager_composition(self):
+        for slots, pos, scale in (
+            (2048, 0, 1),
+            (2048, 1023, 1),
+            (2048, 2047, 3),
+            (34816, 33791, 1),
+        ):
+            with self.subTest(slots=slots, pos=pos):
+                cache, q, sinks = self.filled(slots, pos, scale=scale)
+                positions = torch.tensor([pos], device="cuda", dtype=torch.int32)
+                got = g.sink_attention_k8v4(q, cache, slots, positions, sinks)
+                eager = self.eager(q, cache, slots, pos, sinks, torch.float32).bfloat16()
+                truth = self.eager(q, cache, slots, pos, sinks, torch.float64)
+                error = lambda x: ((x.double() - truth).norm() / truth.norm()).item()  # noqa: E731
+                self.assertGreater((got == eager).float().mean().item(), 0.98)
+                self.assertLessEqual(error(got), error(eager) * 1.02)
+
+    def test_quantized_attention_reads_the_position_in_a_graph(self):
+        cache, q, sinks = self.filled(4096, 4095, seed=3)
+        positions = torch.tensor([10], device="cuda", dtype=torch.int32)
+        g.sink_attention_k8v4(q, cache, 4096, positions, sinks)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            out = g.sink_attention_k8v4(q, cache, 4096, positions, sinks)
+        for pos in (10, 700, 4095, 3):
+            positions.fill_(pos)
+            graph.replay()
+            want = self.eager(q, cache, 4096, pos, sinks, torch.float64)
+            with self.subTest(pos=pos):
+                self.assertLess(((out.double() - want).norm() / want.norm()).item(), 2.5e-3)
+
+    def test_quantized_attention_detector_catches_perturbed_codes(self):
+        cache, q, sinks = self.filled(4096, 4095, seed=5)
+        positions = torch.tensor([4095], device="cuda", dtype=torch.int32)
+        eager = self.eager(q, cache, 4096, 4095, sinks, torch.float32).bfloat16()
+        clean = (g.sink_attention_k8v4(q, cache, 4096, positions, sinks) == eager).float().mean()
+        flat = cache.key.view(-1)
+        gen = torch.Generator(device="cuda").manual_seed(6)
+        flat[torch.randperm(flat.numel(), device="cuda", generator=gen)[: flat.numel() // 100]] ^= 1
+        wrong = (g.sink_attention_k8v4(q, cache, 4096, positions, sinks) == eager).float().mean()
+        # Measured: clean 99.7-100%, one flipped low bit in 1% of key codes 39-44%.
+        self.assertGreater(clean.item(), 0.98)
+        self.assertLess(wrong.item(), 0.85)
+
+    def test_cache_round_trip_and_snapshot(self):
+        cache, _, _ = self.filled(256, 99, seed=7)
+        keys, values = cache.dense(100, torch.float32)
+        state = cache.snapshot()
+        cache.update(
+            torch.zeros(1, 4, 128, device="cuda", dtype=torch.bfloat16),
+            torch.zeros(1, 4, 128, device="cuda", dtype=torch.bfloat16),
+            torch.tensor([5], device="cuda", dtype=torch.int32),
+        )
+        self.assertFalse(torch.equal(cache.dense(100, torch.float32)[0], keys))
+        cache.restore(state)
+        restored = cache.dense(100, torch.float32)
+        self.assertTrue(torch.equal(restored[0], keys) and torch.equal(restored[1], values))
+
+
 if __name__ == "__main__":
     unittest.main()

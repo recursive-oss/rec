@@ -50,7 +50,7 @@ class Engine:
             "device": device.name,
             "architecture": device.gcnArchName.split(":")[0],
             "logical_device": 0,
-            "kv_format": "bf16",
+            "kv_format": "bf16" if self.model.gfx1151_kv == "bf16" else "bf16-window_mlx-k8v4-full",
             "weight_format": self.identity["weight_format"],
             "load_seconds": self.model.load_seconds,
             "engine": "rocm",
@@ -64,15 +64,19 @@ class Engine:
                 "decode": self.model.gfx1151_decode,
                 "attention": self.model.gfx1151_attention,
                 "prefill": self.model.gfx1151_prefill,
+                "kv": self.model.gfx1151_kv,
             },
             "dense_cache_bytes": sum(
                 t.numel() * t.element_size() for t in self.model.dense_cache.values()
             ),
             "prefill_attention_query_rows": self.model.attention_query_rows,
             "prefill_attention_tile_threshold": self.model.attention_tile_threshold,
-            "activation_profile": "bf16-blas-projections_fp32-attention_bf16-kv"
-            if implementation == "blas"
-            else "experimental-fp32-triton_bf16-kv",
+            "activation_profile": (
+                "bf16-blas-projections_fp32-attention"
+                if implementation == "blas"
+                else "experimental-fp32-triton"
+            )
+            + ("_bf16-kv" if self.model.gfx1151_kv == "bf16" else "_k8v4-full-kv"),
         }
 
     @property

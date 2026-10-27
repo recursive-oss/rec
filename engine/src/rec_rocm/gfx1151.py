@@ -16,6 +16,66 @@ def _bf16(x):
 
 
 @tr.jit
+def _quantize_group(x, BITS: tl.constexpr):
+    """MLX affine_quantize of one group: codes (float), FP32 scale and bias; see kv_quantize."""
+    bins = (1 << BITS) - 1
+    lo = tl.min(x, 0)
+    hi = tl.maximum(tl.max(x, 0), 0.0)
+    scale = tl.maximum(tl.div_rn(hi - lo, hi * 0 + bins), 1e-7)
+    side = tl.abs(lo) > tl.abs(hi)
+    scale = tl.where(side, scale, -scale)
+    edge = tl.where(side, lo, hi)
+    q0 = libdevice.round(tl.div_rn(edge, scale))
+    at_zero = q0 == 0
+    scale = tl.where(at_zero, scale, tl.div_rn(edge, tl.where(at_zero, 1.0, q0)))
+    bias = tl.where(at_zero, 0.0, edge)
+    codes = libdevice.round(tl.div_rn(x - bias, tl.zeros_like(x) + scale))
+    return tl.minimum(tl.maximum(codes, 0.0), bins), scale, bias
+
+
+def _round_away(x):
+    a = x.abs()
+    f = a.floor()
+    return torch.copysign(f + ((a - f) >= 0.5).to(x.dtype), x)
+
+
+def kv_quantize(x, bits, group=64):
+    """MLX 0.32 affine_quantize along the last axis, as rec_mlx stores full-attention K/V.
+
+    The range always includes zero from above (w_max starts at 0), the larger-magnitude end is
+    exact, rounding is half away from zero, and codes use the FP32 scale and bias that are then
+    stored as BF16. 4-bit codes pack dimension i (low nibble) with i + D/2 (high nibble).
+    """
+    shape = x.shape
+    w = x.float().reshape(*shape[:-1], shape[-1] // group, group)
+    bins = float((1 << bits) - 1)
+    lo = w.amin(-1, keepdim=True)
+    hi = w.amax(-1, keepdim=True).clamp_min(0.0)
+    # Tensor / Python-scalar division on the GPU multiplies by a reciprocal; keep it IEEE.
+    scale = torch.clamp((hi - lo) / torch.full_like(hi, bins), min=1e-7)
+    side = lo.abs() > hi.abs()
+    scale = torch.where(side, scale, -scale)
+    edge = torch.where(side, lo, hi)
+    q0 = _round_away(edge / scale)
+    at_zero = q0 == 0
+    scale = torch.where(at_zero, scale, edge / torch.where(at_zero, 1.0, q0))
+    bias = torch.where(at_zero, 0.0, edge)
+    codes = _round_away((w - bias) / scale).clamp(0, bins).to(torch.uint8).reshape(shape)
+    if bits == 4:
+        half = shape[-1] // 2
+        codes = codes[..., :half] | (codes[..., half:] << 4)
+    return codes, scale[..., 0].bfloat16(), bias[..., 0].bfloat16()
+
+
+def kv_dequantize(codes, scale, bias, bits, dtype=torch.float32, group=64):
+    if bits == 4:
+        codes = torch.cat((codes & 15, codes >> 4), -1)
+    shape = codes.shape
+    w = codes.float().reshape(*shape[:-1], shape[-1] // group, group)
+    return (w * scale.float()[..., None] + bias.float()[..., None]).reshape(shape).to(dtype)
+
+
+@tr.jit
 def _w4_dot(
     W,
     S,
@@ -170,6 +230,10 @@ def _qk_post(
     KC,
     VC,
     PC,
+    KS,
+    KB,
+    VS,
+    VB,
     POS,
     EPS,
     CAP: tl.constexpr,
@@ -178,6 +242,7 @@ def _qk_post(
     H: tl.constexpr,
     KH: tl.constexpr,
     D: tl.constexpr,
+    QUANT: tl.constexpr,
 ):
     """One program per head of the fused q|k|v vector: q/k RMSNorm, RoPE, and the KV-cache write."""
     head = tl.program_id(0)
@@ -205,15 +270,36 @@ def _qk_post(
             tl.store(QOUT + head * D + half, left.to(tl.bfloat16))
             tl.store(QOUT + head * D + D // 2 + half, right.to(tl.bfloat16))
         else:
-            k = KC + slot * KH * D + (head - H) * D
-            tl.store(k + half, left.to(tl.bfloat16))
-            tl.store(k + D // 2 + half, right.to(tl.bfloat16))
+            row = slot * KH + head - H
+            if QUANT:
+                # One group per half (D == 128): 8-bit keys of the BF16-rounded rotated values.
+                code, scale, bias = _quantize_group(_bf16(left), 8)
+                tl.store(KC + row * D + half, code.to(tl.uint8))
+                tl.store(KS + row * 2, scale.to(tl.bfloat16))
+                tl.store(KB + row * 2, bias.to(tl.bfloat16))
+                code, scale, bias = _quantize_group(_bf16(right), 8)
+                tl.store(KC + row * D + D // 2 + half, code.to(tl.uint8))
+                tl.store(KS + row * 2 + 1, scale.to(tl.bfloat16))
+                tl.store(KB + row * 2 + 1, bias.to(tl.bfloat16))
+            else:
+                tl.store(KC + row * D + half, left.to(tl.bfloat16))
+                tl.store(KC + row * D + D // 2 + half, right.to(tl.bfloat16))
             if head == H:
                 tl.store(PC + slot, pos)
     else:
-        v = VC + slot * KH * D + (head - H - KH) * D
-        tl.store(v + half, left.to(tl.bfloat16))
-        tl.store(v + D // 2 + half, right.to(tl.bfloat16))
+        row = slot * KH + head - H - KH
+        if QUANT:
+            low, low_scale, low_bias = _quantize_group(left, 4)
+            high, high_scale, high_bias = _quantize_group(right, 4)
+            packed = low.to(tl.uint8) | (high.to(tl.uint8) << 4)
+            tl.store(VC + row * (D // 2) + half, packed)
+            tl.store(VS + row * 2, low_scale.to(tl.bfloat16))
+            tl.store(VB + row * 2, low_bias.to(tl.bfloat16))
+            tl.store(VS + row * 2 + 1, high_scale.to(tl.bfloat16))
+            tl.store(VB + row * 2 + 1, high_bias.to(tl.bfloat16))
+        else:
+            tl.store(VC + row * D + half, left.to(tl.bfloat16))
+            tl.store(VC + row * D + D // 2 + half, right.to(tl.bfloat16))
 
 
 @tr.jit
@@ -397,6 +483,14 @@ def qk_post(qkv, q_weight, k_weight, rotation, cache, positions, eps, heads, kv_
     """Normalize and rotate q and k from the fused projection, write k, v and the position to the cache."""
     q = torch.empty((1, heads, dim), device=qkv.device, dtype=qkv.dtype)
     cos, sin = rotation if rotation is not None else (qkv, qkv)
+    quant = cache.quantized
+    if quant and dim != 128:
+        raise ValueError("Quantized KV kernels require head_dim 128")
+    meta = (
+        (cache.key_scale, cache.key_bias, cache.value_scale, cache.value_bias)
+        if quant
+        else (q,) * 4
+    )
     _qk_post[(heads + 2 * kv_heads,)](
         qkv,
         q_weight,
@@ -407,6 +501,7 @@ def qk_post(qkv, q_weight, k_weight, rotation, cache, positions, eps, heads, kv_
         cache.key,
         cache.value,
         cache.positions,
+        *meta,
         positions,
         eps,
         cache.capacity,
@@ -415,6 +510,7 @@ def qk_post(qkv, q_weight, k_weight, rotation, cache, positions, eps, heads, kv_
         heads,
         kv_heads,
         dim,
+        quant,
         enable_fp_fusion=False,
     )
     return q
@@ -555,6 +651,122 @@ def _attention_merge(
 _ATTENTION_CONFIG = (24, 16, 4)  # splits per KV head, slots per tile, warps
 
 
+@tr.jit
+def _dequant(codes, scale, bias):
+    # code * BF16 scale is exact in FP32, so this rounds once, like the eager dequantization.
+    return codes.to(tl.float32) * scale[:, None] + bias[:, None]
+
+
+@tr.jit
+def _split3(x):
+    """Three BF16 terms that sum exactly to the FP32 x (8 + 8 + 8 significand bits)."""
+    a = x.to(tl.bfloat16)
+    rest = x - a.to(tl.float32)
+    b = rest.to(tl.bfloat16)
+    return a, b, (rest - b.to(tl.float32)).to(tl.bfloat16)
+
+
+@tr.jit
+def _dot3(q, k):
+    a, b, c = _split3(k)
+    return (tl.dot(q, a) + tl.dot(q, b)) + tl.dot(q, c)
+
+
+@tr.jit
+def _pv(high, low, v):
+    a, b, c = _split3(v)
+    return ((tl.dot(high, a) + tl.dot(high, b)) + tl.dot(high, c)) + (
+        tl.dot(low, a) + tl.dot(low, b)
+    )
+
+
+@tr.jit
+def _attention_split_k8v4(
+    Q,
+    KC,
+    KS,
+    KB,
+    VC,
+    VS,
+    VB,
+    KP,
+    POS,
+    PART_M,
+    PART_L,
+    PART_ACC,
+    SCALE,
+    T: tl.constexpr,
+    KH: tl.constexpr,
+    G: tl.constexpr,
+    GP: tl.constexpr,
+    D: tl.constexpr,
+    SPLITS: tl.constexpr,
+    TILE: tl.constexpr,
+):
+    """_attention_split over 8-bit K / 4-bit V groups (one group per half of D == 128).
+
+    Like the eager path, each element is dequantized in FP32 (one rounding) before the dot products;
+    the matrix unit gets an exact three-term BF16 split. MLX's s*(q.codes) + b*sum(q) cancels badly
+    when the bias is the group's large extreme value (real keys), so it is not used.
+    """
+    kv = tl.program_id(0)
+    split = tl.program_id(1)
+    pos = tl.load(POS)
+    extent = tl.minimum(T, pos + 1)
+    span = tl.cdiv(tl.cdiv(extent, TILE), SPLITS) * TILE
+    begin = split * span
+    end = tl.minimum(begin + span, extent)
+    g = tl.arange(0, GP)
+    h = tl.arange(0, D // 2)
+    query = Q + (kv * G + g[:, None]) * D + h[None, :]
+    q0 = tl.load(query, g[:, None] < G, 0)
+    q1 = tl.load(query + D // 2, g[:, None] < G, 0)
+    m = tl.full((GP,), -float("inf"), tl.float32)
+    total = tl.zeros((GP,), tl.float32)
+    acc0 = tl.zeros((GP, D // 2), tl.float32)
+    acc1 = tl.zeros((GP, D // 2), tl.float32)
+    for start in range(begin, end, TILE):
+        index = start + tl.arange(0, TILE)
+        inside = index < end
+        kp = tl.load(KP + index, inside, -1)
+        valid = inside & (kp >= 0) & (kp <= pos)
+        row = index * KH + kv
+        keys = KC + row[:, None] * D + h[None, :]
+        k0 = tl.load(keys, inside[:, None], 0)
+        k1 = tl.load(keys + D // 2, inside[:, None], 0)
+        ks0 = tl.load(KS + row * 2, inside, 0).to(tl.float32)
+        ks1 = tl.load(KS + row * 2 + 1, inside, 0).to(tl.float32)
+        kb0 = tl.load(KB + row * 2, inside, 0).to(tl.float32)
+        kb1 = tl.load(KB + row * 2 + 1, inside, 0).to(tl.float32)
+        score = _dot3(q0, tl.trans(_dequant(k0, ks0, kb0))) + _dot3(
+            q1, tl.trans(_dequant(k1, ks1, kb1))
+        )
+        score = tl.div_rn(score, tl.zeros_like(score) + SCALE)
+        score = tl.where(valid[None, :], score, -float("inf"))
+        new_m = tl.maximum(m, tl.max(score, 1))
+        safe = tl.where(new_m == -float("inf"), 0.0, new_m)
+        correction = libdevice.exp(m - safe)
+        p = libdevice.exp(score - safe[:, None])
+        packed = tl.load(VC + row[:, None] * (D // 2) + h[None, :], inside[:, None], 0)
+        v0 = packed & 15
+        v1 = packed >> 4
+        vs0 = tl.load(VS + row * 2, inside, 0).to(tl.float32)
+        vs1 = tl.load(VS + row * 2 + 1, inside, 0).to(tl.float32)
+        vb0 = tl.load(VB + row * 2, inside, 0).to(tl.float32)
+        vb1 = tl.load(VB + row * 2 + 1, inside, 0).to(tl.float32)
+        high = p.to(tl.bfloat16)
+        low = (p - high.to(tl.float32)).to(tl.bfloat16)
+        acc0 = acc0 * correction[:, None] + _pv(high, low, _dequant(v0, vs0, vb0))
+        acc1 = acc1 * correction[:, None] + _pv(high, low, _dequant(v1, vs1, vb1))
+        total = total * correction + tl.sum(p, 1)
+        m = new_m
+    base = (kv * SPLITS + split) * GP + g
+    tl.store(PART_M + base, m)
+    tl.store(PART_L + base, total)
+    tl.store(PART_ACC + base[:, None] * D + h[None, :], acc0)
+    tl.store(PART_ACC + base[:, None] * D + D // 2 + h[None, :], acc1)
+
+
 def sink_attention(q, key, value, positions, kpositions, sinks, window=None, config=None):
     """Single-token GQA attention with a learned sink: q [1, H, D]; key/value [T, KH, D] BF16 cache views."""
     _, heads, dim = q.shape
@@ -581,6 +793,60 @@ def sink_attention(q, key, value, positions, kpositions, sinks, window=None, con
         gp,
         dim,
         window or 0,
+        splits,
+        tile,
+        num_warps=warps,
+        enable_fp_fusion=False,
+    )
+    out = torch.empty_like(q)
+    _attention_merge[(kv_heads, group)](
+        part_m,
+        part_l,
+        part_acc,
+        sinks,
+        out,
+        group,
+        gp,
+        dim,
+        splits,
+        32,
+        num_warps=4,
+        enable_fp_fusion=False,
+    )
+    return out
+
+
+def sink_attention_k8v4(q, cache, extent, positions, sinks, config=None):
+    """sink_attention over the first `extent` slots of a quantized full-attention LayerCache."""
+    _, heads, dim = q.shape
+    kv_heads = cache.key.shape[1]
+    if dim != 128:
+        raise ValueError("Quantized KV kernels require head_dim 128")
+    group = heads // kv_heads
+    splits, tile, warps = config or _ATTENTION_CONFIG
+    gp = max(16, tr.next_power_of_2(group))
+    part_m = torch.empty((kv_heads, splits, gp), device=q.device, dtype=torch.float32)
+    part_l = torch.empty_like(part_m)
+    part_acc = torch.empty((kv_heads, splits, gp, dim), device=q.device, dtype=torch.float32)
+    _attention_split_k8v4[(kv_heads, splits)](
+        q,
+        cache.key,
+        cache.key_scale,
+        cache.key_bias,
+        cache.value,
+        cache.value_scale,
+        cache.value_bias,
+        cache.positions,
+        positions,
+        part_m,
+        part_l,
+        part_acc,
+        dim**0.5,
+        extent,
+        kv_heads,
+        group,
+        gp,
+        dim,
         splits,
         tile,
         num_warps=warps,

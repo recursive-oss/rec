@@ -7,7 +7,7 @@ import torch
 from safetensors.torch import save_file
 
 
-def make_checkpoint(directory):
+def make_checkpoint(directory, head_dim=32):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     c = {
@@ -20,7 +20,7 @@ def make_checkpoint(directory):
         "shared_expert_intermediate_size": 64,
         "num_attention_heads": 2,
         "num_key_value_heads": 1,
-        "head_dim": 32,
+        "head_dim": head_dim,
         "num_experts": 8,
         "num_experts_per_tok": 2,
         "vocab_size": 128,
@@ -52,9 +52,14 @@ def make_checkpoint(directory):
         for name in ["input_layernorm.weight", "post_attention_layernorm.weight"]:
             norm(p + "." + name, (64,))
         for name in ["q_norm.weight", "k_norm.weight"]:
-            norm(p + ".self_attn." + name, (32,))
+            norm(p + ".self_attn." + name, (head_dim,))
         w[p + ".self_attn.softmax_offset"] = torch.randn(2, dtype=torch.bfloat16)
-        for name, n, k in [("q", 64, 64), ("k", 32, 64), ("v", 32, 64), ("o", 64, 64)]:
+        for name, n, k in [
+            ("q", 2 * head_dim, 64),
+            ("k", head_dim, 64),
+            ("v", head_dim, 64),
+            ("o", 64, 2 * head_dim),
+        ]:
             linear(p + f".self_attn.{name}_proj", n, k)
         base = p + ".mlp" if i == 0 else p + ".mlp.switch_mlp"
         mid = 128 if i == 0 else 64

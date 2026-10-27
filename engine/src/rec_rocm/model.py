@@ -35,12 +35,40 @@ def rope(x, positions, theta=10000.0, angles=None):
 
 
 class LayerCache:
-    def __init__(self, capacity, kvheads, dim, window=None, device="cuda"):
+    def __init__(self, capacity, kvheads, dim, window=None, device="cuda", quantized=False):
         self.window = window
         self.capacity = min(capacity, window) if window else capacity
-        self.key = torch.zeros((self.capacity, kvheads, dim), device=device, dtype=torch.bfloat16)
-        self.value = torch.zeros_like(self.key)
+        # rec_mlx's MixedQuantizedKVCache: 8-bit keys, 4-bit values, group 64, BF16 metadata.
+        self.quantized = quantized
+        if quantized:
+            groups = (self.capacity, kvheads, dim // 64)
+            self.key = torch.zeros((self.capacity, kvheads, dim), device=device, dtype=torch.uint8)
+            self.value = torch.zeros(
+                (self.capacity, kvheads, dim // 2), device=device, dtype=torch.uint8
+            )
+            self.key_scale, self.key_bias, self.value_scale, self.value_bias = (
+                torch.zeros(groups, device=device, dtype=torch.bfloat16) for _ in range(4)
+            )
+        else:
+            self.key = torch.zeros(
+                (self.capacity, kvheads, dim), device=device, dtype=torch.bfloat16
+            )
+            self.value = torch.zeros_like(self.key)
         self.positions = torch.full((self.capacity,), -1, device=device, dtype=torch.int32)
+
+    @property
+    def tensors(self):
+        if self.quantized:
+            return (
+                self.key,
+                self.value,
+                self.positions,
+                self.key_scale,
+                self.key_bias,
+                self.value_scale,
+                self.value_bias,
+            )
+        return self.key, self.value, self.positions
 
     def reset(self):
         self.positions.fill_(-1)
@@ -52,22 +80,48 @@ class LayerCache:
                 value[-self.capacity :],
                 positions[-self.capacity :],
             )
-        if native:
+        if native and not self.quantized:
             ops.write_cache(key, value, positions, self)
             return
         if self.window:
             slots = positions.long() % self.capacity
         else:
             slots = positions.long()
-        self.key.index_copy_(0, slots, key)
-        self.value.index_copy_(0, slots, value)
+        if self.quantized:
+            from .gfx1151 import kv_quantize
+
+            parts = (*kv_quantize(key, 8), *kv_quantize(value, 4))
+            caches = (
+                self.key,
+                self.key_scale,
+                self.key_bias,
+                self.value,
+                self.value_scale,
+                self.value_bias,
+            )
+            for cache, part in zip(caches, parts, strict=True):
+                cache.index_copy_(0, slots, part)
+        else:
+            self.key.index_copy_(0, slots, key)
+            self.value.index_copy_(0, slots, value)
         self.positions.index_copy_(0, slots, positions)
 
+    def dense(self, end, dtype):
+        """Dequantized keys and values of the first `end` slots."""
+        from .gfx1151 import kv_dequantize
+
+        return (
+            kv_dequantize(self.key[:end], self.key_scale[:end], self.key_bias[:end], 8, dtype),
+            kv_dequantize(
+                self.value[:end], self.value_scale[:end], self.value_bias[:end], 4, dtype
+            ),
+        )
+
     def snapshot(self):
-        return tuple(t.clone() for t in (self.key, self.value, self.positions))
+        return tuple(t.clone() for t in self.tensors)
 
     def restore(self, state):
-        for dest, source in zip((self.key, self.value, self.positions), state, strict=True):
+        for dest, source in zip(self.tensors, state, strict=True):
             dest.copy_(source)
 
 
@@ -91,6 +145,9 @@ class FlintModel:
         self.gfx1151_decode = os.environ.get("REC_GFX1151_DECODE", "off")
         self.gfx1151_attention = os.environ.get("REC_GFX1151_ATTENTION", "off")
         self.gfx1151_prefill = os.environ.get("REC_GFX1151_PREFILL", "off")
+        self.gfx1151_kv = os.environ.get("REC_GFX1151_KV", "bf16")
+        if self.gfx1151_kv not in ("bf16", "k8v4"):
+            raise ValueError("Unknown REC_GFX1151_KV")
         if self.gfx1151_prefill not in ("off", "grouped"):
             raise ValueError("Unknown REC_GFX1151_PREFILL")
         if self.gfx1151_prefill != "off" and self.rdna4_prefill != "off":
@@ -182,6 +239,8 @@ class FlintModel:
                         continue
                     self.dense_cache[path] = ops.dequantize(w, s, b, dtype=self.activation_dtype)
                     cached_bytes += needed
+        if self.gfx1151_kv == "k8v4" and self.config["head_dim"] % 64:
+            raise ValueError("REC_GFX1151_KV=k8v4 needs head_dim divisible by the group size 64")
         self.caches = [
             LayerCache(
                 capacity,
@@ -189,6 +248,7 @@ class FlintModel:
                 self.config["head_dim"],
                 None if kind == "full_attention" else self.config["sliding_window"],
                 device,
+                quantized=kind == "full_attention" and self.gfx1151_kv == "k8v4",
             )
             for kind in self.config["layer_types"]
         ]
@@ -513,6 +573,11 @@ class FlintModel:
                 if not cache.window and count > 1:
                     end = self.position + count
                     ak, av, ap = ak[:end], av[:end], ap[:end]
+                if cache.quantized:
+                    # As rec_mlx: prefill attends to BF16-dequantized K/V; decode does not round them.
+                    ak, av = cache.dense(
+                        ap.shape[0], torch.float32 if count == 1 else torch.bfloat16
+                    )
             attention = self._attend(q, ak, av, ap, positions, cache, p, count, x.dtype)
             if cache.window and count > 1:
                 cache.update(key, value, positions, native=not self.reference)
@@ -602,10 +667,15 @@ class FlintModel:
             if not cache.window:
                 extent = self.decode_attention_capacity
                 ak, av, ap = ak[:extent], av[:extent], ap[:extent]
-            if self.gfx1151_attention == "split":
+            if self.gfx1151_attention == "split" and cache.quantized:
+                sinks = self.weights[p + ".self_attn.softmax_offset"]
+                attention = g.sink_attention_k8v4(q, cache, extent, positions, sinks)
+            elif self.gfx1151_attention == "split":
                 sinks = self.weights[p + ".self_attn.softmax_offset"]
                 attention = g.sink_attention(q, ak, av, positions, ap, sinks, cache.window)
             else:
+                if cache.quantized:
+                    ak, av = cache.dense(extent, torch.float32)
                 attention = self._attend(q, ak, av, ap, positions, cache, p, 1, x.dtype)
             o = [w[p + ".self_attn.o_proj." + n] for n in ("weight", "scales", "biases")]
             x = g.gemv_w4(attention.reshape(1, -1), *o, residual=x)
@@ -747,14 +817,7 @@ class GraphDecoder:
             state = []
             for cache in model.caches:
                 slot = initial % cache.capacity if cache.window else initial
-                state.append(
-                    (
-                        slot,
-                        cache.key[slot].clone(),
-                        cache.value[slot].clone(),
-                        cache.positions[slot].clone(),
-                    )
-                )
+                state.append((slot, [t[slot].clone() for t in cache.tensors]))
         else:
             state = model.snapshot()
 
@@ -762,10 +825,9 @@ class GraphDecoder:
             if compact:
                 model.position = initial
                 model.graph_position.fill_(initial)
-                for cache, (slot, key, value, position) in zip(model.caches, saved, strict=True):
-                    cache.key[slot].copy_(key)
-                    cache.value[slot].copy_(value)
-                    cache.positions[slot].copy_(position)
+                for cache, (slot, parts) in zip(model.caches, saved, strict=True):
+                    for tensor, part in zip(cache.tensors, parts, strict=True):
+                        tensor[slot].copy_(part)
             else:
                 model.restore(saved)
 

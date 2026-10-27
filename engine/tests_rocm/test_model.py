@@ -205,5 +205,71 @@ class SmallFlint(unittest.TestCase):
             )
 
 
+@unittest.skipUnless(
+    torch.cuda.get_device_properties(0).gcnArchName.split(":")[0] == "gfx1151",
+    "quantized KV kernels are qualified only on gfx1151",
+)
+class QuantizedKVFlint(unittest.TestCase):
+    """REC_GFX1151_KV=k8v4 on a head_dim-128 checkpoint (the quantized kernels need 128)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = make_checkpoint(self.tmp.name, head_dim=128)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def build(self, decode="off", attention="off", reference=False):
+        env = {
+            "REC_GFX1151_KV": "k8v4",
+            "REC_GFX1151_DECODE": decode,
+            "REC_GFX1151_ATTENTION": attention,
+        }
+        with patch.dict("os.environ", env):
+            model = FlintModel(self.path, capacity=1024, reference=reference)
+        self.assertEqual([c.quantized for c in model.caches], [True, False, False])
+        return model
+
+    def relative(self, a, b):
+        return ((a - b).norm() / b.norm()).item()
+
+    def test_teacher_forcing_matches_the_reference_model(self):
+        model, reference = self.build(), self.build(reference=True)
+        tokens = torch.tensor([1, 20, 12, 85, 100, 101, 3, 50, 9], device="cuda")
+        self.assertLess(self.relative(model.forward(tokens), reference.forward(tokens)), 0.01)
+        for token in range(16):
+            t = torch.tensor([token], device="cuda")
+            self.assertLess(self.relative(model.forward(t), reference.forward(t)), 0.01)
+        cache, expected = model.caches[0], reference.caches[0]
+        for current, wanted in zip(cache.tensors, expected.tensors, strict=True):
+            self.assertEqual(current.dtype, wanted.dtype)
+
+    def test_fused_decode_matches_the_generic_decode(self):
+        generic, fused = self.build(), self.build("layer", "split")
+        prompt = (torch.arange(300, device="cuda") * 7) % 128
+        for model in (generic, fused):
+            for chunk in prompt.split(128):
+                model.forward(chunk)
+        for token in range(24):
+            t = torch.tensor([token * 5 % 128], device="cuda")
+            self.assertLess(self.relative(fused.forward(t), generic.forward(t)), 0.01)
+
+    def test_compact_graph_restores_quantized_slots(self):
+        model = self.build("layer", "split")
+        model.rdna4_graph = "compact"
+        for chunk in (torch.arange(600, device="cuda") % 128).split(128):
+            model.forward(chunk)
+        saved = model.snapshot()
+        expected = model.forward(torch.tensor([17], device="cuda")).clone()
+        model.restore(saved)
+        graph = GraphDecoder(model)
+        for cache, original in zip(model.caches, saved[1], strict=True):
+            for current, wanted in zip(cache.tensors, original, strict=True):
+                torch.testing.assert_close(current, wanted, atol=0, rtol=0)
+        torch.testing.assert_close(
+            graph(torch.tensor([17], device="cuda")), expected, atol=0, rtol=0
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
