@@ -20,10 +20,10 @@ var developmentOptions = [][2]string{
 }
 
 var commands = []commandHelp{
-	{"launch", "pi|opencode", "Start the server if needed and open a harness", [][2]string{
+	{"launch", "pi|omp|opencode", "Start the server if needed and open a harness", [][2]string{
 		{"--args", "Print the harness command instead of running it; needs a running server"},
 	}},
-	{"exec", "pi|opencode ARGS", "Run a harness command, such as installing a plugin", nil},
+	{"exec", "pi|omp|opencode ARGS", "Run a harness command, such as installing a plugin", nil},
 	{"serve", "[MODEL]", "Start the model server in this terminal", append([][2]string{
 		{"--context TOKENS", "Total input and output tokens (default: set by the release)"},
 		{"--port PORT", "Local port (default: 11500)"},

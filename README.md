@@ -48,11 +48,12 @@ terminals. All other data lives under `~/.local/share/rec`.
 
 We find the best performance from our models when paired with the
 [pi](https://pi.dev/) harness. For convenience, rec provides pre-configured
-recipes for running pi and [OpenCode](https://opencode.ai) harnesses. Run
+recipes for running pi, omp, and [OpenCode](https://opencode.ai) harnesses. Run
 them using:
 
 ```bash
 rec launch pi  # preferred
+rec launch omp
 rec launch opencode
 ```
 
@@ -65,7 +66,7 @@ run downloads the model and harness. The model server continues to run after
 you close the terminal. Run `rec stop` to stop it.
 
 These harnesses are kept separate from anything on your system. Use
-`rec exec pi|opencode ARGS` to run their own commands, for example:
+`rec exec pi|omp|opencode ARGS` to run their own commands, for example:
 
 ```bash
 rec exec pi install npm:PACKAGE
@@ -119,8 +120,8 @@ token or as `x-api-key`. The model is `flint`.
 
 | Command | What it does |
 |---|---|
-| `rec launch pi\|opencode` | Start the server if needed and open a harness |
-| `rec exec pi\|opencode ARGS` | Run a harness command, such as installing a plugin |
+| `rec launch pi\|omp\|opencode` | Start the server if needed and open a harness |
+| `rec exec pi\|omp\|opencode ARGS` | Run a harness command, such as installing a plugin |
 | `rec serve` | Start the model server in this terminal |
 | `rec status` | Show whether the server is running |
 | `rec stop` | Stop the server |
