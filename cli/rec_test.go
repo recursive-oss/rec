@@ -360,10 +360,10 @@ func TestManifestAcceptsPinnedNativeHIPTarget(t *testing.T) {
 	m := Manifest{
 		Engine: "flint-native", Schema: 1, Model: "flint",
 		Revision: "3b93f9053b530488405ae9fca51d4900d6ce21f0",
-		OS: "linux", Arch: "amd64", Backend: "hip", Context: 262144,
+		OS:       "linux", Arch: "amd64", Backend: "hip", Context: 262144,
 		MinRAM: 1, Entry: "config.json",
-		Files: []File{{Name: "config.json", Size: 1, SHA256: digest([]byte("x")), URL: "https://example.com/config.json"}},
-		RuntimeSHA: digest([]byte("runtime")),
+		Files:        []File{{Name: "config.json", Size: 1, SHA256: digest([]byte("x")), URL: "https://example.com/config.json"}},
+		RuntimeSHA:   digest([]byte("runtime")),
 		RuntimeFiles: []File{{Name: "flint-serve", Size: 1, SHA256: digest([]byte("r")), Executable: true}},
 	}
 	got, err := decodeManifest(mustJSON(t, m))
@@ -416,6 +416,9 @@ func TestNativeHIPPreflightOnLinuxAMD64(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Skip("native HIP target is Linux/amd64")
 	}
+	oldProbe := nativeHIPProbe
+	nativeHIPProbe = func() error { return nil }
+	defer func() { nativeHIPProbe = oldProbe }()
 	m := Manifest{Engine: "flint-native", OS: "linux", Arch: "amd64", Backend: "hip", MinRAM: 1}
 	if err := preflight(m); err != nil {
 		t.Fatalf("native HIP host rejected: %v", err)

@@ -53,6 +53,11 @@ func TestServeLifecycle(t *testing.T) {
 		(runtime.GOOS != "linux" || runtime.GOARCH != "amd64") {
 		t.Skip("serving lifecycle target unavailable")
 	}
+	if runtime.GOOS == "linux" {
+		oldProbe := nativeHIPProbe
+		nativeHIPProbe = func() error { return nil }
+		defer func() { nativeHIPProbe = oldProbe }()
+	}
 	// Unix socket paths are limited to 104 bytes on macOS; t.TempDir is too long.
 	root, err := os.MkdirTemp("/tmp", "rec-test-")
 	if err != nil {
