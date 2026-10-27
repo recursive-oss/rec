@@ -49,8 +49,9 @@ func (b *lockedBuffer) String() string {
 }
 
 func TestServeLifecycle(t *testing.T) {
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		t.Skip("serving requires Apple Silicon")
+	if (runtime.GOOS != "darwin" || runtime.GOARCH != "arm64") &&
+		(runtime.GOOS != "linux" || runtime.GOARCH != "amd64") {
+		t.Skip("serving lifecycle target unavailable")
 	}
 	// Unix socket paths are limited to 104 bytes on macOS; t.TempDir is too long.
 	root, err := os.MkdirTemp("/tmp", "rec-test-")
@@ -75,13 +76,17 @@ func TestServeLifecycle(t *testing.T) {
 	if err := os.Mkdir(runtimeDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(runtimeDir, runtimeServer), server, 0700); err != nil {
+	engine, backend, serverName := "mlx", "metal", runtimeServer
+	if runtime.GOOS == "linux" {
+		engine, backend, serverName = "flint-native", "hip", "flint-serve"
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, serverName), server, 0700); err != nil {
 		t.Fatal(err)
 	}
-	m := Manifest{Engine: "mlx", Schema: 1, Model: "test", Revision: "test", Development: true, OS: "darwin", Arch: "arm64", Backend: "metal",
+	m := Manifest{Engine: engine, Schema: 1, Model: "test", Revision: "test", Development: true, OS: runtime.GOOS, Arch: runtime.GOARCH, Backend: backend,
 		Context: 2048, MinRAM: 1, Entry: "config.json",
 		Files:      []File{{Name: "config.json", URL: weights.URL + "/config.json", Size: int64(len(config)), SHA256: digest(config)}},
-		RuntimeSHA: digest([]byte("runtime")), RuntimeFiles: []File{{Name: runtimeServer, Size: int64(len(server)), SHA256: digest(server), Executable: true}}}
+		RuntimeSHA: digest([]byte("runtime")), RuntimeFiles: []File{{Name: serverName, Size: int64(len(server)), SHA256: digest(server), Executable: true}}}
 	if _, err := ensureModelWithClient(context.Background(), p, m, io.Discard, weights.Client()); err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +115,7 @@ func TestServeLifecycle(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		s, _ = control(p, "status")
 	}
-	if !strings.Contains(out.String(), "test is ready.") || s.Endpoint != fmt.Sprintf("http://127.0.0.1:%d/v1", port) || s.Engine != "mlx" {
+	if !strings.Contains(out.String(), "test is ready.") || s.Endpoint != fmt.Sprintf("http://127.0.0.1:%d/v1", port) || s.Engine != engine {
 		t.Fatalf("wrong readiness report %+v:\n%s", s, out.String())
 	}
 
