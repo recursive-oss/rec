@@ -109,6 +109,10 @@ The response contains generated text in `choices`. For other clients, use
 base URL `http://127.0.0.1:11500/v1`, model `flint`, and the API key from
 `rec auth token`.
 
+The OpenAI-compatible endpoint does not support structured output through
+`response_format`. Requests with `json_object` or `json_schema` return HTTP 400.
+Omit `response_format`, set it to `null`, or use `{"type": "text"}` for text output.
+
 The Anthropic-compatible API is available at
 `http://127.0.0.1:11500/v1/messages`. Point `ANTHROPIC_BASE_URL` at
 `http://127.0.0.1:11500` and send the token from `rec auth token` as a bearer
