@@ -52,41 +52,75 @@ func TestReleaseManifestContext(t *testing.T) {
 func TestExistingInstanceUsesEffectiveProfile(t *testing.T) {
 	m := Manifest{Model: "flint", Revision: "test", RuntimeSHA: "runtime", Context: 4096}
 	s := Status{Ready: true, Model: m.Model, Revision: m.Revision, Runtime: m.RuntimeSHA,
-		Context: m.Context, Instance: instanceKey(m), Endpoint: "http://127.0.0.1:11500/v1"}
-	if !sameInstance(s, m, 11500) {
+		Context: m.Context, Instance: instanceKey(m), Listen: "127.0.0.1:11500", Endpoint: "http://127.0.0.1:11500/v1"}
+	if !sameInstance(s, m, "127.0.0.1", 11500) {
 		t.Fatal("identical instance rejected")
 	}
 	explicit, _ := withContext(m, 4096)
-	if !sameInstance(s, explicit, 11500) {
+	if !sameInstance(s, explicit, "127.0.0.1", 11500) {
 		t.Fatal("explicit default rejected")
 	}
 	changed := m
 	changed.Context = 16384
-	if sameInstance(s, changed, 11500) {
+	if sameInstance(s, changed, "127.0.0.1", 11500) {
 		t.Fatal("reused a smaller context")
 	}
 	changed = m
 	changed.MinRAM++
-	if sameInstance(s, changed, 11500) {
+	if sameInstance(s, changed, "127.0.0.1", 11500) {
 		t.Fatal("reused different serving settings")
 	}
 	s.Instance = ""
-	if sameInstance(s, m, 11500) {
+	if sameInstance(s, m, "127.0.0.1", 11500) {
 		t.Fatal("legacy server without profile must restart")
 	}
 }
 
-func TestContextReachesEngine(t *testing.T) {
+func TestSameInstanceRequiresSameHost(t *testing.T) {
+	m := Manifest{Model: "flint", Revision: "test", RuntimeSHA: "runtime", Context: 4096}
+	wildcard := Status{Ready: true, Model: m.Model, Revision: m.Revision, Runtime: m.RuntimeSHA,
+		Context: m.Context, Instance: instanceKey(m), Listen: "0.0.0.0:11500", Endpoint: "http://127.0.0.1:11500/v1"}
+	if sameInstance(wildcard, m, "127.0.0.1", 11500) {
+		t.Fatal("reused a server bound to a different host")
+	}
+	if !sameInstance(wildcard, m, "0.0.0.0", 11500) {
+		t.Fatal("a server bound to all interfaces was rejected")
+	}
+	specific := Status{Ready: true, Model: m.Model, Revision: m.Revision, Runtime: m.RuntimeSHA,
+		Context: m.Context, Instance: instanceKey(m), Listen: "192.168.1.5:11500", Endpoint: "http://192.168.1.5:11500/v1"}
+	if sameInstance(specific, m, "127.0.0.1", 11500) {
+		t.Fatal("reused a server bound to another interface")
+	}
+	if !sameInstance(specific, m, "192.168.1.5", 11500) {
+		t.Fatal("an instance on a specific interface was rejected")
+	}
+	legacy := Status{Ready: true, Model: m.Model, Revision: m.Revision, Runtime: m.RuntimeSHA,
+		Context: m.Context, Instance: instanceKey(m), Endpoint: "http://127.0.0.1:11500/v1"}
+	if sameInstance(legacy, m, "127.0.0.1", 11500) {
+		t.Fatal("legacy server without listen address must restart")
+	}
+}
+
+func TestHostAndContextReachesEngine(t *testing.T) {
 	m := releaseManifest(t)
-	_, args, _ := launchCommand(Paths{}, m, "/runtime", "/model/flint-int4.json", 11500)
-	found := false
+	_, args, _ := launchCommand(Paths{}, m, "/runtime", "/model/flint-int4.json", "127.0.0.1", 11500)
+	hostArg := ""
 	for i, arg := range args {
-		if arg == "--context-limit" && i+1 < len(args) {
-			found = args[i+1] == "262144"
+		if arg == "--host" && i+1 < len(args) {
+			hostArg = args[i+1]
 		}
 	}
-	if !found {
-		t.Fatal("default 256K allocation did not reach the engine")
+	if hostArg != "127.0.0.1" {
+		t.Fatalf("the requested host did not reach the engine: %q", hostArg)
+	}
+	contextLimit := ""
+	for i, arg := range args {
+		if arg == "--context-limit" && i+1 < len(args) {
+			contextLimit = args[i+1]
+		}
+	}
+	if contextLimit != "262144" {
+		t.Fatalf("default 256K allocation did not reach the engine: %q", contextLimit)
 	}
 	if _, err := withContext(m, 524288); err == nil {
 		t.Fatal("512K exceeds the engine limit")

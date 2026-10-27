@@ -26,7 +26,8 @@ var commands = []commandHelp{
 	{"exec", "pi|opencode ARGS", "Run a harness command, such as installing a plugin", nil},
 	{"serve", "[MODEL]", "Start the model server in this terminal", append([][2]string{
 		{"--context TOKENS", "Total input and output tokens (default: set by the release)"},
-		{"--port PORT", "Local port (default: 11500)"},
+		{"--port PORT", "Port (default: 11500)"},
+		{"--host ADDRESS", "IP address to listen on (default: 127.0.0.1; 0.0.0.0 for all interfaces)"},
 	}, developmentOptions...)},
 	{"status", "", "Show whether the server is running", nil},
 	{"stop", "", "Stop the server", nil},

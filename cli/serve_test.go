@@ -48,6 +48,38 @@ func (b *lockedBuffer) String() string {
 	return b.b.String()
 }
 
+func TestParseHostAndClientEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		host     string
+		endpoint string
+	}{
+		{"127.0.0.1", "http://127.0.0.1:11500/v1"},
+		{"0.0.0.0", "http://127.0.0.1:11500/v1"},
+		{"::", "http://[::1]:11500/v1"},
+		{"192.168.1.5", "http://192.168.1.5:11500/v1"},
+		{"fe80::1", "http://[fe80::1]:11500/v1"},
+	} {
+		if got := clientEndpoint(tc.host, 11500); got != tc.endpoint {
+			t.Fatalf("clientEndpoint(%q, 11500) = %q, want %q", tc.host, got, tc.endpoint)
+		}
+	}
+	for host, canonical := range map[string]string{"0:0::0": "::", "::ffff:127.0.0.1": "127.0.0.1"} {
+		if addr, err := parseHost(host); err != nil || addr.String() != canonical {
+			t.Fatalf("parseHost(%q) = %v, %v; want %s", host, addr, err, canonical)
+		}
+	}
+	for _, bad := range []string{"localhost", "", "example.com", "fe80::1%en0"} {
+		if _, err := parseHost(bad); err == nil {
+			t.Fatalf("parseHost(%q) accepted a non-IP address", bad)
+		}
+	}
+	for _, good := range []string{"127.0.0.1", "0.0.0.0", "::", "192.168.1.5", "fe80::1"} {
+		if _, err := parseHost(good); err != nil {
+			t.Fatalf("parseHost(%q) rejected a valid IP: %v", good, err)
+		}
+	}
+}
+
 func TestServeLifecycle(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("serving requires Apple Silicon")
@@ -95,7 +127,7 @@ func TestServeLifecycle(t *testing.T) {
 
 	var out lockedBuffer
 	done := make(chan error, 1)
-	go func() { done <- serve(context.Background(), p, m, runtimeDir, port, &out) }()
+	go func() { done <- serve(context.Background(), p, m, runtimeDir, "127.0.0.1", port, &out) }()
 	deadline := time.Now().Add(2 * time.Minute)
 	var s Status
 	for !s.Ready {
@@ -113,14 +145,17 @@ func TestServeLifecycle(t *testing.T) {
 	if !strings.Contains(out.String(), "test is ready.") || s.Endpoint != fmt.Sprintf("http://127.0.0.1:%d/v1", port) || s.Engine != "mlx" {
 		t.Fatalf("wrong readiness report %+v:\n%s", s, out.String())
 	}
+	if s.Listen != fmt.Sprintf("127.0.0.1:%d", port) {
+		t.Fatalf("wrong listen address: %q", s.Listen)
+	}
 
 	var again bytes.Buffer
-	if err := serve(context.Background(), p, m, runtimeDir, port, &again); err != nil || !strings.Contains(again.String(), "test is already running") {
+	if err := serve(context.Background(), p, m, runtimeDir, "127.0.0.1", port, &again); err != nil || !strings.Contains(again.String(), "test is already running") {
 		t.Fatalf("identical run did not reuse the server: %v %s", err, again.String())
 	}
 	changed := m
 	changed.Context, changed.MaxContext = 4096, 4096
-	if err := serve(context.Background(), p, changed, runtimeDir, port, io.Discard); err == nil {
+	if err := serve(context.Background(), p, changed, runtimeDir, "127.0.0.1", port, io.Discard); err == nil {
 		t.Fatal("a different context reused the running server")
 	}
 

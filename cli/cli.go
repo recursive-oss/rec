@@ -93,9 +93,11 @@ func run(args []string) error {
 	runtimeDir := flags.String("runtime-dir", "", "")
 	var contextTokens int
 	port := 11500
+	var host string
 	if command == "serve" {
 		flags.IntVar(&contextTokens, "context", 0, "")
 		flags.IntVar(&port, "port", port, "")
+		flags.StringVar(&host, "host", "127.0.0.1", "")
 	}
 	flags.SetOutput(io.Discard)
 	if e := flags.Parse(rest); e != nil {
@@ -106,6 +108,14 @@ func run(args []string) error {
 	}
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("port must be between 1 and 65535")
+	}
+	if command == "serve" {
+		// Canonicalize so the engine, Status.Listen and sameInstance agree on one spelling.
+		addr, err := parseHost(host)
+		if err != nil {
+			return err
+		}
+		host = addr.String()
 	}
 	m, e := loadManifest(*manifest)
 	if e == nil && command == "serve" {
@@ -139,7 +149,7 @@ func run(args []string) error {
 		}
 		return e
 	}
-	return serve(ctx, p, m, *runtimeDir, port, os.Stderr, background)
+	return serve(ctx, p, m, *runtimeDir, host, port, os.Stderr, background)
 }
 
 func doctor(p Paths, m Manifest, manifestErr error) error {

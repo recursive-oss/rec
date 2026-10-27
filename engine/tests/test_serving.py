@@ -488,6 +488,34 @@ class ServingTest(unittest.TestCase):
             server.server_close()
             thread.join()
 
+    def test_make_server_binds_ipv6_and_dual_stack(self):
+        if not socket.has_ipv6:
+            self.skipTest("IPv6 loopback is unavailable")
+        # "::" must also accept IPv4 clients; IPV6_V6ONLY has to be cleared before bind.
+        for bind, clients in (("::1", ("::1",)), ("::", ("::1", "127.0.0.1"))):
+            with self.subTest(bind=bind):
+                server = make_server(self.engine, (bind, 0), Path(self.temp.name) / "metrics")
+                thread = threading.Thread(target=server.serve_forever)
+                thread.start()
+                try:
+                    self.assertEqual(server.address_family, socket.AF_INET6)
+                    port = server.server_address[1]
+                    for client in clients:
+                        conn = http.client.HTTPConnection(client, port, timeout=5)
+                        try:
+                            conn.request("GET", "/health")
+                            response = conn.getresponse()
+                            self.assertEqual(response.status, 200)
+                            self.assertEqual(json.loads(response.read())["status"], "ready")
+                        finally:
+                            conn.close()
+                finally:
+                    server.shutdown()
+                    server.generator.cancel()
+                    server.generator.join()
+                    server.server_close()
+                    thread.join()
+
 
 if __name__ == "__main__":
     unittest.main()

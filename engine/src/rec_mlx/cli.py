@@ -33,7 +33,10 @@ def main():
         help="total input and output tokens (default: %(default)s)",
     )
     parser.add_argument(
-        "--port", type=int, default=8080, help="loopback port for serve (default: %(default)s)"
+        "--port", type=int, default=8080, help="port for serve (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--host", default="127.0.0.1", help="address for serve to listen on"
     )
     parser.add_argument(
         "--grammar",
@@ -123,13 +126,14 @@ def main():
 
         server = make_server(
             engine,
-            ("127.0.0.1", args.port),
+            (args.host, args.port),
             args.metrics,
             defaults=settings,
             api_key=api_key,
             grammar_mode=args.grammar,
         )
-        print(f"Listening on http://127.0.0.1:{server.server_port}/v1", flush=True)
+        host = f"[{args.host}]" if ":" in args.host and not args.host.startswith("[") else args.host
+        print(f"Listening on http://{host}:{server.server_port}/v1", flush=True)
 
         def stop(signum, frame):
             server.generator.cancel()
