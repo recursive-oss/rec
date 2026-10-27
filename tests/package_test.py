@@ -72,6 +72,14 @@ with tempfile.TemporaryDirectory(prefix="rec-package-test-") as td:
     identity = json.loads((hip_runtime / "build.json").read_text())
     assert identity == {"engine": "flint-native", "os": "linux", "arch": "amd64", "backend": "hip"}
     assert (hip_runtime / "flint-serve").stat().st_mode & 0o111
+    sentinel = hip_runtime / "keep-me"
+    sentinel.write_text("do not delete\n")
+    rejected = subprocess.run(
+        [sys.executable, str(root / "packaging/build-flint-runtime.py"),
+         "--flint-serve", str(fake_flint), "--output", str(hip_runtime)],
+        capture_output=True, text=True,
+    )
+    assert rejected.returncode != 0 and sentinel.read_text() == "do not delete\n", rejected.stderr
     bad = work / "flint-link"
     bad.symlink_to(fake_flint)
     rejected = subprocess.run(
