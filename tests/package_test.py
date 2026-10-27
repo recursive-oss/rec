@@ -135,17 +135,24 @@ with tempfile.TemporaryDirectory(prefix="rec-package-test-") as td:
     arbitrary = work / "arbitrary-runtime"
     arbitrary.mkdir()
     arbitrary_server = arbitrary / "flint-serve"
-    arbitrary_server.write_text("#!/bin/sh\nexit 0\n")
+    arbitrary_contract = dict(identity["runtime_contract"])
+    arbitrary_server.write_text(
+        "#!/bin/sh\n"
+        f"if [ \"$1\" = --runtime-contract ]; then echo '{json.dumps(arbitrary_contract, separators=(',', ':'))}'; exit 0; fi\n"
+        "exit 0\n"
+    )
     arbitrary_server.chmod(0o755)
     arbitrary_m = json.loads(hip_manifest.read_text())
-    (arbitrary / "build.json").write_text(
-        json.dumps({k: arbitrary_m[k] for k in ("engine", "os", "arch", "backend")})
-    )
+    (arbitrary / "build.json").write_text(json.dumps({
+        **{k: arbitrary_m[k] for k in ("engine", "os", "arch", "backend")},
+        "binary_sha256": hashlib.sha256(arbitrary_server.read_bytes()).hexdigest(),
+        "runtime_contract": arbitrary_contract,
+    }))
     rejected = subprocess.run(
         [sys.executable, str(root / "packaging/package.py"),
          "--runtime-dir", str(arbitrary), "--manifest", str(hip_manifest),
          "--version", "0.1.0-test", "--output", str(work / "bad-native-rec")],
         capture_output=True, text=True,
     )
-    assert rejected.returncode != 0 and "runtime contract" in rejected.stderr, rejected.stderr
+    assert rejected.returncode != 0 and "trusted runtime" in rejected.stderr, rejected.stderr
     print("Packaging, archive validation and runtime/manifest mismatch rejection passed")
