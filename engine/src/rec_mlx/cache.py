@@ -76,12 +76,28 @@ class KVStorage:
     def grow(self, capacity):
         assert 0 < capacity <= BLOCK_TOKENS * MAX_BLOCKS
         count = (capacity + BLOCK_TOKENS - 1) // BLOCK_TOKENS
-        for index in range(self.capacity // BLOCK_TOKENS, count):
+        start = self.capacity // BLOCK_TOKENS
+        if count > start:
+            mx.synchronize()
+            mx.clear_cache()
+        for index in range(start, count):
             size = self.global_elements + (self.local_elements if index == 0 else 0)
             block = mx.zeros((size // 1024, 1024), mx.bfloat16)
             mx.eval(block)
             self.banks[index] = block
             self.capacity = (index + 1) * BLOCK_TOKENS
+
+    def shrink(self, capacity):
+        block_tokens = getattr(self, "block_tokens", BLOCK_TOKENS)
+        count = max(1, (capacity + block_tokens - 1) // block_tokens)
+        current = self.capacity // block_tokens
+        if count < current:
+            for index in range(count, current):
+                self.banks[index] = mx.zeros((1, 1024), mx.bfloat16)
+                mx.eval(self.banks[index])
+            self.capacity = count * block_tokens
+            mx.synchronize()
+            mx.clear_cache()
 
     def layer(self, index, count=None):
         offset, cap = self.rows[index][61:63]

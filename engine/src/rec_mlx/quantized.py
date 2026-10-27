@@ -105,8 +105,11 @@ class QATSession:
         limit = len(tokens) + self.maximum
         assert limit <= self.engine.model.context_limit
         capacity = min(len(tokens), self.engine.prefill_chunk_size)
+        prior_storage = None if prefix is None else prefix.storage
         prefix, self.common_prefix_tokens = select_prefix(prefix, tokens)
         self.cached_tokens = 0 if prefix is None else len(prefix.tokens)
+        if hasattr(prior_storage, "shrink"):
+            prior_storage.shrink(max(capacity, self.cached_tokens))
         if prefix is not None:
             state = self.engine.prefill_state(capacity, limit=limit, storage=prefix.storage)
             cache, logits = prefix.layers, prefix.logits
@@ -115,7 +118,7 @@ class QATSession:
                     entry.grow(len(tokens))
                     mx.eval(entry.state)
         else:
-            state = self.engine.prefill_state(capacity, limit=limit)
+            state = self.engine.prefill_state(capacity, limit=limit, storage=prior_storage)
             cache = self.engine.model.make_cache(len(tokens), state["kv"])
         self.prompt_cache = prefix or PromptCache([], cache, None, state["kv"])
         native = self.engine.model.native
@@ -124,8 +127,9 @@ class QATSession:
             if should_stop():
                 raise PrefillCancelled()
             self.prompt_cache.checkpoint()
-            state["kv"].grow(min(begin + chunk_size, len(tokens)))
-            inputs = mx.array([tokens[begin : begin + chunk_size]], dtype=mx.int32)
+            end = min(begin + chunk_size, len(tokens))
+            state["kv"].grow(end)
+            inputs = mx.array([tokens[begin:end]], dtype=mx.int32)
             hidden = (
                 native.model(inputs, cache, should_stop=should_stop)
                 if interrupt_between_layers
@@ -133,7 +137,10 @@ class QATSession:
             )
             logits = native.lm_head(hidden[:, -1:])
             mx.eval(logits, [entry.state for entry in cache])
-            self.prompt_cache.advance(tokens[begin : begin + chunk_size], logits)
+            if end > 32768:
+                mx.synchronize()
+                mx.clear_cache()
+            self.prompt_cache.advance(tokens[begin:end], logits)
         if should_stop():
             raise PrefillCancelled()
         # Global attention already uses decode storage. Only the bounded sliding

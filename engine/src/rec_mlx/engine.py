@@ -75,6 +75,7 @@ class Engine:
         self.context_limit = context_limit
         self._prompt_cache = None
         self._prefix_preparation = None
+        self._local = threading.local()
         self.mx = mx
         self.tokenizer = load_tokenizer(directory)
         self._constraints = None
@@ -141,6 +142,17 @@ class Engine:
         finally:
             events.close()
 
+    def _gpu_stream(self):
+        # Metal streams are thread-local; HTTP handlers run outside the model-loading thread.
+        local = getattr(self, "_local", None)
+        if local is None:
+            local = self._local = threading.local()
+        stream = getattr(local, "stream", None)
+        if stream is None:
+            stream = self.mx.new_stream(self.mx.gpu)
+            local.stream = stream
+        return stream
+
     def generate_tokens(
         self,
         ids,
@@ -150,8 +162,7 @@ class Engine:
         grammar=None,
         return_logprobs=False,
     ):
-        # Metal streams are thread-local; HTTP handlers run outside the model-loading thread.
-        with self.mx.stream(self.mx.new_stream(self.mx.gpu)):
+        with self.mx.stream(self._gpu_stream()):
             from .prefix import PrefillCancelled
 
             try:
@@ -179,7 +190,7 @@ class Engine:
         end = origin + (len(pending.tokens) - origin) // chunk * chunk
         start = time.perf_counter()
         prepared = 0
-        with mx.stream(mx.new_stream(mx.gpu)):
+        with mx.stream(self._gpu_stream()):
             while (origin if pending.cache is None else len(pending.cache.tokens)) < end:
                 if should_stop():
                     break
@@ -246,12 +257,16 @@ class Engine:
         try:
             preparation = self._prefix_preparation
             prefix = self._take_prefix(ids)
+            if preparation is not None and prefix is not preparation.cache:
+                preparation = None
             from .prefix import PrefillCancelled
 
             try:
-                logits = session.prefill(ids, prefix=prefix, should_stop=should_stop)
+                logits = session.prefill(
+                    ids, prefix=[prefix, prefix := None][0], should_stop=should_stop
+                )
             except PrefillCancelled:
-                if preparation is not None and prefix is preparation.cache:
+                if preparation is not None:
                     # Keep the original input anchor until a new request completes prefill.
                     self._prompt_cache = preparation.origin
                     preparation.cache = session.prompt_cache
@@ -259,7 +274,7 @@ class Engine:
                 else:
                     self._prompt_cache = session.prompt_cache
                 raise
-            del prefix, preparation
+            del preparation
             self._prompt_cache = session.prompt_cache
             text_stream = StreamingText(self.tokenizer)
             if sampling.presence_penalty:
