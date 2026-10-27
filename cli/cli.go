@@ -171,10 +171,10 @@ func doctor(p Paths, m Manifest, manifestErr error) error {
 		return manifestErr
 	}
 	if err := preflight(m); err != nil {
-		ui.failed("This Mac does not meet the requirements", "")
+		ui.failed("This system does not meet the requirements", "")
 		return err
 	}
-	ui.succeeded("This Mac meets the requirements", "")
+	ui.succeeded("This system meets the requirements", "")
 	if !modelFilesPresent(p, m) {
 		ui.step(warningStyle.Render("!"), displayName(m.Model)+" is not downloaded", "run rec pull")
 		return nil
