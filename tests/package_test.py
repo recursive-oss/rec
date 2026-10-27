@@ -148,9 +148,16 @@ with tempfile.TemporaryDirectory(prefix="rec-package-test-") as td:
         "binary_sha256": hashlib.sha256(arbitrary_server.read_bytes()).hexdigest(),
         "runtime_contract": arbitrary_contract,
     }))
+    forged_manifest = work / "forged-native-manifest.json"
+    arbitrary_m.update({
+        "runtime_binary_sha256": hashlib.sha256(arbitrary_server.read_bytes()).hexdigest(),
+        "runtime_source_commit": arbitrary_contract["source_commit"],
+        "runtime_source_tree": arbitrary_contract["source_tree"],
+    })
+    forged_manifest.write_text(json.dumps(arbitrary_m))
     rejected = subprocess.run(
         [sys.executable, str(root / "packaging/package.py"),
-         "--runtime-dir", str(arbitrary), "--manifest", str(hip_manifest),
+         "--runtime-dir", str(arbitrary), "--manifest", str(forged_manifest),
          "--version", "0.1.0-test", "--output", str(work / "bad-native-rec")],
         capture_output=True, text=True,
     )
