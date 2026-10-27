@@ -374,7 +374,7 @@ func TestManifestAcceptsPinnedNativeHIPTarget(t *testing.T) {
 		t.Fatalf("native HIP target identity lost: %+v", got)
 	}
 	for name, change := range map[string]func(*Manifest){
-		"revision":   func(value *Manifest) { value.Revision = "unpinned" },
+		"revision":    func(value *Manifest) { value.Revision = "unpinned" },
 		"max context": func(value *Manifest) { value.MaxContext = 262145 },
 		"context":     func(value *Manifest) { value.Context, value.MaxContext = 262145, 262145 },
 	} {
