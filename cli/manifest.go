@@ -68,6 +68,8 @@ func safeRuntimeName(s string) bool {
 }
 
 const runtimeServer = "rec-mlx"
+const nativeFlintRevision = "3b93f9053b530488405ae9fca51d4900d6ce21f0"
+const nativeFlintMaxContext = 262144
 
 func runtimeServerFor(m Manifest) (string, error) {
 	switch {
@@ -98,6 +100,10 @@ func decodeManifest(data []byte) (Manifest, error) {
 	}
 	if m.MaxContext < 0 || (m.MaxContext > 0 && m.Context > m.MaxContext) {
 		return m, fmt.Errorf("invalid maximum context")
+	}
+	if m.Engine == "flint-native" &&
+		(m.Revision != nativeFlintRevision || m.MaxContext != nativeFlintMaxContext || m.Context > nativeFlintMaxContext) {
+		return m, fmt.Errorf("native Flint revision or context does not match the runtime contract")
 	}
 	if m.Schema != 1 || !safeName(m.Model) || m.Revision == "" || m.Context < 256 || m.MinRAM <= 0 || len(m.Files) == 0 {
 		return m, fmt.Errorf("incomplete model descriptor")
