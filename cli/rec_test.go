@@ -422,6 +422,34 @@ func TestNativeHIPPreflightOnLinuxAMD64(t *testing.T) {
 	}
 }
 
+func TestNativeHIPHardwareRequiresGFX1151(t *testing.T) {
+	root := t.TempDir()
+	kfd := filepath.Join(root, "kfd")
+	if err := os.WriteFile(kfd, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	nodes := filepath.Join(root, "nodes")
+	if err := os.MkdirAll(filepath.Join(nodes, "1"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	properties := filepath.Join(nodes, "1", "properties")
+	write := func(target string) {
+		t.Helper()
+		content := "simd_count 80\nwave_front_size 32\ngfx_target_version " + target + "\n"
+		if err := os.WriteFile(properties, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("110501")
+	if err := nativeHIPHardware(kfd, filepath.Join(nodes, "*", "properties")); err != nil {
+		t.Fatalf("gfx1151 rejected: %v", err)
+	}
+	write("110500")
+	if err := nativeHIPHardware(kfd, filepath.Join(nodes, "*", "properties")); err == nil {
+		t.Fatal("non-gfx1151 device accepted")
+	}
+}
+
 func discardProgress() *transfer { return newTransfer(io.Discard, "Downloading", "Downloaded", 0, 0) }
 
 func TestStampRejectsRestoredMtime(t *testing.T) {
