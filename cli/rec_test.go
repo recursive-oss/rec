@@ -412,6 +412,22 @@ func TestAppleChipAllowlist(t *testing.T) {
 	}
 }
 
+func TestNativeHIPRequiresLocalModelDirectory(t *testing.T) {
+	native := Manifest{Engine: "flint-native"}
+	if err := validateModelSource("serve", native, ""); err == nil {
+		t.Fatal("native serve accepted without --model-dir")
+	}
+	if err := validateModelSource("pull", native, ""); err == nil {
+		t.Fatal("native pull accepted remote checkpoint transport")
+	}
+	if err := validateModelSource("serve", native, "/models/flint"); err != nil {
+		t.Fatalf("native local model rejected: %v", err)
+	}
+	if err := validateModelSource("serve", Manifest{Engine: "mlx"}, ""); err != nil {
+		t.Fatalf("MLX download behavior changed: %v", err)
+	}
+}
+
 func TestNativeHIPPreflightOnLinuxAMD64(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Skip("native HIP target is Linux/amd64")
