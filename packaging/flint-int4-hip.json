@@ -9,7 +9,7 @@
   "backend": "hip",
   "context": 262144,
   "max_context": 262144,
-  "min_ram_bytes": 51539607552,
+  "min_ram_bytes": 8589934592,
   "entry": "flint-int4.json",
   "files": [
     {
