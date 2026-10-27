@@ -355,6 +355,25 @@ func TestManifestSchemaAndPaths(t *testing.T) {
 	}
 }
 
+func TestManifestAcceptsPinnedNativeHIPTarget(t *testing.T) {
+	m := Manifest{
+		Engine: "flint-native", Schema: 1, Model: "flint",
+		Revision: "3b93f9053b530488405ae9fca51d4900d6ce21f0",
+		OS: "linux", Arch: "amd64", Backend: "hip", Context: 262144,
+		MinRAM: 1, Entry: "config.json",
+		Files: []File{{Name: "config.json", Size: 1, SHA256: digest([]byte("x")), URL: "https://example.com/config.json"}},
+		RuntimeSHA: digest([]byte("runtime")),
+		RuntimeFiles: []File{{Name: "flint-serve", Size: 1, SHA256: digest([]byte("r")), Executable: true}},
+	}
+	got, err := decodeManifest(mustJSON(t, m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Engine != "flint-native" || got.Backend != "hip" {
+		t.Fatalf("native HIP target identity lost: %+v", got)
+	}
+}
+
 func TestAppleChipAllowlist(t *testing.T) {
 	for chip, ok := range map[string]bool{"Apple M4 Pro": true, "Apple M5 Pro": true, "Apple M5 Max": true, "Apple M4 Max": false, "Apple M4": false, "Apple M1 Pro": false} {
 		if (checkAppleChip(chip) == nil) != ok {
