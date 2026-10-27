@@ -374,6 +374,35 @@ func TestManifestAcceptsPinnedNativeHIPTarget(t *testing.T) {
 	}
 }
 
+func TestVerifyLocalModelUsesVerifiedFilesInPlace(t *testing.T) {
+	root := t.TempDir()
+	data := []byte("pinned checkpoint bytes")
+	entry := filepath.Join(root, "config.json")
+	if err := os.WriteFile(entry, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	m := Manifest{Entry: "config.json", Files: []File{{
+		Name: "config.json", Size: int64(len(data)), SHA256: digest(data),
+	}}}
+	got, err := verifyLocalModel(root, m, io.Discard)
+	if err != nil || got != entry {
+		t.Fatalf("verified local model not returned in place: %q %v", got, err)
+	}
+	if err := os.WriteFile(entry, []byte("corrupt checkpoint bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyLocalModel(root, m, io.Discard); err == nil {
+		t.Fatal("corrupt local model accepted")
+	}
+	os.Remove(entry)
+	if err := os.Symlink(filepath.Join(root, "target"), entry); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyLocalModel(root, m, io.Discard); err == nil {
+		t.Fatal("symlinked local model file accepted")
+	}
+}
+
 func TestAppleChipAllowlist(t *testing.T) {
 	for chip, ok := range map[string]bool{"Apple M4 Pro": true, "Apple M5 Pro": true, "Apple M5 Max": true, "Apple M4 Max": false, "Apple M4": false, "Apple M1 Pro": false} {
 		if (checkAppleChip(chip) == nil) != ok {
