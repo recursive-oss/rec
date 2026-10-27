@@ -58,7 +58,8 @@ def validate_stopping(engine, resident, specification, tokenizer, prompt):
                 for token in tokens[:begin]:
                     reference.forward_token(token)
                     candidate.forward_token(token)
-                mx.random.state[0] = keys[begin]
+                hi, lo = keys[begin].tolist()
+                mx.random.seed((int(hi) << 32) | int(lo))
                 expected = [
                     pick(reference.forward_token(tokens[begin + i]), begin + i + 1)
                     for i in range(stop)
@@ -67,7 +68,8 @@ def validate_stopping(engine, resident, specification, tokenizer, prompt):
                 model.eos_tokens = [expected[-1]]
                 # Each compiled graph must capture this fixture's EOS, not a previous one.
                 resident.filtered = FilteredResidentSampler(resident.module, engine, specification)
-                mx.random.state[0] = keys[begin]
+                hi, lo = keys[begin].tolist()
+                mx.random.seed((int(hi) << 32) | int(lo))
                 actual = resident.block(candidate._state, tokens[begin], 8, 43 + begin, **settings)
                 assert actual == expected and len(actual) == stop, "EOS truncation mismatch"
                 assert mx.array_equal(mx.random.state[0], expected_key).item(), "EOS RNG mismatch"
@@ -227,7 +229,8 @@ def main():
                     count = min((1, 3, 8)[packets % 3], steps - position)
                     packet_input = pending
                     expected, logits, traces = [], [], []
-                    mx.random.state[0] = scalar_key
+                    hi, lo = scalar_key.tolist()
+                    mx.random.seed((int(hi) << 32) | int(lo))
                     for offset in range(count):
                         value, trace = engine.forward(reference._state, pending)
                         if temperature == 0 and position + offset < 8:
@@ -252,7 +255,8 @@ def main():
                         if pending in model.eos_tokens:
                             break
                     scalar_key = mx.random.state[0]
-                    mx.random.state[0] = packet_key
+                    hi, lo = packet_key.tolist()
+                    mx.random.seed((int(hi) << 32) | int(lo))
                     actual = resident.block(
                         candidate._state,
                         packet_input,
