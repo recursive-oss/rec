@@ -69,6 +69,17 @@ func safeRuntimeName(s string) bool {
 
 const runtimeServer = "rec-mlx"
 
+func runtimeServerFor(m Manifest) (string, error) {
+	switch {
+	case m.Engine == "mlx" && m.OS == "darwin" && m.Arch == "arm64" && m.Backend == "metal":
+		return runtimeServer, nil
+	case m.Engine == "flint-native" && m.OS == "linux" && m.Arch == "amd64" && m.Backend == "hip":
+		return "flint-serve", nil
+	default:
+		return "", fmt.Errorf("unsupported engine or target")
+	}
+}
+
 func decodeManifest(data []byte) (Manifest, error) {
 	var m Manifest
 	d := json.NewDecoder(bytes.NewReader(data))
@@ -80,9 +91,10 @@ func decodeManifest(data []byte) (Manifest, error) {
 	if d.Decode(&extra) != io.EOF {
 		return m, fmt.Errorf("trailing manifest data")
 	}
-	// Each engine is one target. Adding an engine adds its own case here.
-	if m.Engine != "mlx" || m.OS != "darwin" || m.Arch != "arm64" || m.Backend != "metal" {
-		return m, fmt.Errorf("unsupported engine or target: rec runs the MLX engine on Apple Silicon")
+	// Each engine is one closed target tuple.
+	serverName, err := runtimeServerFor(m)
+	if err != nil {
+		return m, err
 	}
 	if m.MaxContext < 0 || (m.MaxContext > 0 && m.Context > m.MaxContext) {
 		return m, fmt.Errorf("invalid maximum context")
@@ -124,12 +136,12 @@ func decodeManifest(data []byte) (Manifest, error) {
 	}
 	server := false
 	for _, f := range m.RuntimeFiles {
-		if f.Name == runtimeServer && f.Executable {
+		if f.Name == serverName && f.Executable {
 			server = true
 		}
 	}
 	if !server {
-		return m, fmt.Errorf("runtime requires executable %s", runtimeServer)
+		return m, fmt.Errorf("runtime requires executable %s", serverName)
 	}
 	return m, nil
 }
