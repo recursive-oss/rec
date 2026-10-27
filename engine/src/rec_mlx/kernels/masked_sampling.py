@@ -1,12 +1,15 @@
 from functools import partial
 
 import mlx.core as mx
-from mlx_lm.sample_utils import make_sampler
+from mlx_lm.sample_utils import make_sampler as native_sampler
 
 
 class FilteredResidentSampler:
     def __init__(self, module, engine, specification):
         self.module, self.engine = module, engine
+        make_sampler = native_sampler
+        if engine.device_profile.chip == "M4 Max":
+            from .filtered_sampling import make_sampler
         # After EOS, remaining graph nodes must not write KV or consume positions.
         inactive = f"""
 if(!active) {{
