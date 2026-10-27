@@ -9,6 +9,9 @@
   "backend": "hip",
   "context": 262144,
   "max_context": 262144,
+  "runtime_binary_sha256": "9217b560f9b71b65ce0587eb9d57aca41000b2afa527dc94dc984ee6d28c84d7",
+  "runtime_source_commit": "13965eff710a5de3b031b68b77604b232616502a",
+  "runtime_source_tree": "de744eb50a9f5c0e15faaccdedadb471ca420897",
   "min_ram_bytes": 8589934592,
   "entry": "flint-int4.json",
   "files": [

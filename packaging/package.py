@@ -30,6 +30,17 @@ def validate_native_runtime(runtime_dir, manifest, metadata):
         raise ValueError("native runtime contract metadata is incomplete")
     if metadata["binary_sha256"] != sha(server.read_bytes()):
         raise ValueError("native runtime contract binary digest mismatch")
+    trusted = {
+        "binary": manifest.get("runtime_binary_sha256"),
+        "commit": manifest.get("runtime_source_commit"),
+        "tree": manifest.get("runtime_source_tree"),
+    }
+    if (not re.fullmatch(r"[0-9a-f]{64}", str(trusted["binary"] or ""))
+            or not all(re.fullmatch(r"[0-9a-f]{40}", str(trusted[key] or ""))
+                       for key in ("commit", "tree"))):
+        raise ValueError("trusted runtime pins are missing")
+    if metadata["binary_sha256"] != trusted["binary"]:
+        raise ValueError("trusted runtime binary digest mismatch")
     contract = metadata["runtime_contract"]
     fixed = {
         "schema": 1, "engine": "flint-native", "os": "linux", "arch": "amd64",
@@ -44,6 +55,9 @@ def validate_native_runtime(runtime_dir, manifest, metadata):
             or not all(re.fullmatch(r"[0-9a-f]{40}", str(contract.get(key, "")))
                        for key in ("source_commit", "source_tree"))):
         raise ValueError("native runtime contract is incompatible")
+    if (contract["source_commit"] != trusted["commit"]
+            or contract["source_tree"] != trusted["tree"]):
+        raise ValueError("trusted runtime source identity mismatch")
     probe = subprocess.run([str(server.resolve()), "--runtime-contract"],
                            capture_output=True, text=True, timeout=30)
     try:

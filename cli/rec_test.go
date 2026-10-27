@@ -362,9 +362,12 @@ func TestManifestAcceptsPinnedNativeHIPTarget(t *testing.T) {
 		Revision: "3b93f9053b530488405ae9fca51d4900d6ce21f0",
 		OS:       "linux", Arch: "amd64", Backend: "hip", Context: 262144, MaxContext: 262144,
 		MinRAM: 1, Entry: "config.json",
-		Files:        []File{{Name: "config.json", Size: 1, SHA256: digest([]byte("x")), URL: "https://example.com/config.json"}},
-		RuntimeSHA:   digest([]byte("runtime")),
-		RuntimeFiles: []File{{Name: "flint-serve", Size: 1, SHA256: digest([]byte("r")), Executable: true}},
+		Files:               []File{{Name: "config.json", Size: 1, SHA256: digest([]byte("x")), URL: "https://example.com/config.json"}},
+		RuntimeSHA:          digest([]byte("runtime")),
+		RuntimeFiles:        []File{{Name: "flint-serve", Size: 1, SHA256: digest([]byte("r")), Executable: true}},
+		RuntimeBinarySHA:    digest([]byte("r")),
+		RuntimeSourceCommit: strings.Repeat("a", 40),
+		RuntimeSourceTree:   strings.Repeat("b", 40),
 	}
 	got, err := decodeManifest(mustJSON(t, m))
 	if err != nil {

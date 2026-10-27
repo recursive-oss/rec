@@ -31,21 +31,24 @@ type File struct {
 }
 
 type Manifest struct {
-	Engine       string `json:"engine"`
-	Schema       int    `json:"schema"`
-	Model        string `json:"model"`
-	Revision     string `json:"revision"`
-	Development  bool   `json:"development"`
-	OS           string `json:"os"`
-	Arch         string `json:"arch"`
-	Backend      string `json:"backend"`
-	Context      int    `json:"context"`
-	MaxContext   int    `json:"max_context,omitempty"`
-	MinRAM       int64  `json:"min_ram_bytes"`
-	Files        []File `json:"files"`
-	Entry        string `json:"entry"`
-	RuntimeSHA   string `json:"runtime_sha256"`
-	RuntimeFiles []File `json:"runtime_files"`
+	Engine              string `json:"engine"`
+	Schema              int    `json:"schema"`
+	Model               string `json:"model"`
+	Revision            string `json:"revision"`
+	Development         bool   `json:"development"`
+	OS                  string `json:"os"`
+	Arch                string `json:"arch"`
+	Backend             string `json:"backend"`
+	Context             int    `json:"context"`
+	MaxContext          int    `json:"max_context,omitempty"`
+	MinRAM              int64  `json:"min_ram_bytes"`
+	Files               []File `json:"files"`
+	Entry               string `json:"entry"`
+	RuntimeSHA          string `json:"runtime_sha256"`
+	RuntimeFiles        []File `json:"runtime_files"`
+	RuntimeBinarySHA    string `json:"runtime_binary_sha256,omitempty"`
+	RuntimeSourceCommit string `json:"runtime_source_commit,omitempty"`
+	RuntimeSourceTree   string `json:"runtime_source_tree,omitempty"`
 }
 
 func validHash(s string) bool {
@@ -104,6 +107,11 @@ func decodeManifest(data []byte) (Manifest, error) {
 	if m.Engine == "flint-native" &&
 		(m.Revision != nativeFlintRevision || m.MaxContext != nativeFlintMaxContext || m.Context > nativeFlintMaxContext) {
 		return m, fmt.Errorf("native Flint revision or context does not match the runtime contract")
+	}
+	if m.Engine == "flint-native" &&
+		(!validHash(m.RuntimeBinarySHA) || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(m.RuntimeSourceCommit) ||
+			!regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(m.RuntimeSourceTree)) {
+		return m, fmt.Errorf("native Flint trusted runtime pins are missing")
 	}
 	if m.Schema != 1 || !safeName(m.Model) || m.Revision == "" || m.Context < 256 || m.MinRAM <= 0 || len(m.Files) == 0 {
 		return m, fmt.Errorf("incomplete model descriptor")
