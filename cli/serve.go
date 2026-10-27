@@ -274,9 +274,15 @@ func serve(parent context.Context, p Paths, m Manifest, override, modelDir strin
 	}
 	runtimeProgress.succeed()
 	var model string
-	if modelDir != "" {
+	if m.Engine == "flint-native" {
+		if modelDir == "" {
+			return fmt.Errorf("native Flint requires --model-dir DIR")
+		}
 		model, e = verifyLocalModel(modelDir, m, out)
 	} else {
+		if modelDir != "" {
+			return fmt.Errorf("--model-dir is supported only by the native Flint engine")
+		}
 		model, e = ensureModel(ctx, p, m, out)
 	}
 	if e != nil {

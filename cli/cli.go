@@ -13,6 +13,19 @@ import (
 	"syscall"
 )
 
+func validateModelSource(command string, m Manifest, modelDir string) error {
+	if m.Engine != "flint-native" {
+		return nil
+	}
+	if command == "pull" {
+		return fmt.Errorf("native Flint checkpoints are local-only; rec pull is unavailable")
+	}
+	if command == "serve" && modelDir == "" {
+		return fmt.Errorf("native Flint requires --model-dir DIR")
+	}
+	return nil
+}
+
 func run(args []string) error {
 	background := len(args) > 0 && args[0] == "_background"
 	if background {
@@ -131,6 +144,9 @@ func run(args []string) error {
 	}
 	if modelDir != "" && m.Engine != "flint-native" {
 		return fmt.Errorf("--model-dir is supported only by the native Flint engine")
+	}
+	if e := validateModelSource(command, m, modelDir); e != nil {
+		return e
 	}
 	if m.Development {
 		newScreen(os.Stderr).step(warningStyle.Render("!"), "Development bundle: this is not a qualified Flint release.", "")
