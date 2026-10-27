@@ -124,8 +124,11 @@ with tempfile.TemporaryDirectory(prefix="rec-package-test-") as td:
         check=True,
     )
     staged = bound_runtime / "flint-serve"
-    assert b"MUTATED-NO-CONTRACT" not in staged.read_bytes(), staged.read_bytes()
-    assert subprocess.run([str(staged), "--runtime-contract"], capture_output=True).returncode == 0
+    staged_probe = subprocess.run(
+        [str(staged), "--runtime-contract"], capture_output=True, text=True
+    )
+    assert staged_probe.returncode == 0
+    assert json.loads(staged_probe.stdout) == identity["runtime_contract"], staged_probe.stdout
 
     # Native packages must not trust a four-field build.json around an arbitrary executable.
     hip_manifest = root / "packaging/flint-int4-hip.json"
