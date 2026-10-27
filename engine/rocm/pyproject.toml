@@ -33,3 +33,4 @@ include = ["rec_rocm*", "rec_mlx", "rec_mlx.kernels"]
 
 [tool.setuptools.package-data]
 rec_mlx = ["chat_template.jinja"]
+"rec_rocm.hip" = ["*.hip"]

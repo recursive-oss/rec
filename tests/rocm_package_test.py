@@ -75,6 +75,7 @@ with tempfile.TemporaryDirectory(prefix="rec rocm package ") as td:
     assert embedded["engine"] == "rocm" and embedded["backend"] == "hip"
     assert any(f["name"] == "rec-rocm" and f["executable"] for f in embedded["runtime_files"])
     assert any(f["name"] == "lib/rec_rocm/model.py" for f in embedded["runtime_files"])
+    assert any(f["name"] == "lib/rec_rocm/hip/attention.hip" for f in embedded["runtime_files"])
     if sys.platform == "linux":
         assert (
             subprocess.check_output([str(output), "--version"], text=True).strip()

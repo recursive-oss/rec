@@ -152,7 +152,7 @@ class FlintModel:
             raise ValueError("Unknown REC_GFX1151_PREFILL")
         if self.gfx1151_prefill != "off" and self.rdna4_prefill != "off":
             raise ValueError("REC_GFX1151_PREFILL replaces REC_RDNA4_PREFILL")
-        if self.gfx1151_attention not in ("off", "split"):
+        if self.gfx1151_attention not in ("off", "split", "hip"):
             raise ValueError("Unknown REC_GFX1151_ATTENTION")
         if self.gfx1151_attention != "off" and self.gfx1151_decode != "layer":
             raise ValueError("REC_GFX1151_ATTENTION requires REC_GFX1151_DECODE=layer")
@@ -172,6 +172,14 @@ class FlintModel:
             and torch.cuda.get_device_properties(device).gcnArchName.split(":")[0] != "gfx1151"
         ):
             raise ValueError("REC_GFX1151_DECODE is qualified only on gfx1151")
+        if self.gfx1151_attention == "hip":
+            # HIP for the k8v4 full-attention layers; BF16 window layers keep the Triton split.
+            if self.gfx1151_kv != "k8v4":
+                raise ValueError("REC_GFX1151_ATTENTION=hip needs REC_GFX1151_KV=k8v4")
+            if not reference:
+                from . import hip
+
+                hip.load("attention")
         if self.rdna4_expert not in ("off", "simd", "wmma"):
             raise ValueError("Unknown REC_RDNA4_EXPERT")
         if self.rdna4_attention not in ("off", "decode", "all", "mask"):
@@ -623,6 +631,7 @@ class FlintModel:
     def _forward_decode_layer(self, tokens, positions, trace):
         """Single-token forward with fused gfx1151 kernels; attention scores and PV use _attend."""
         from . import gfx1151 as g
+        from . import hip
 
         c = self.config
         eps = c["rms_norm_eps"]
@@ -667,10 +676,11 @@ class FlintModel:
             if not cache.window:
                 extent = self.decode_attention_capacity
                 ak, av, ap = ak[:extent], av[:extent], ap[:extent]
-            if self.gfx1151_attention == "split" and cache.quantized:
+            if self.gfx1151_attention != "off" and cache.quantized:
                 sinks = self.weights[p + ".self_attn.softmax_offset"]
-                attention = g.sink_attention_k8v4(q, cache, extent, positions, sinks)
-            elif self.gfx1151_attention == "split":
+                fused = hip if self.gfx1151_attention == "hip" else g
+                attention = fused.sink_attention_k8v4(q, cache, extent, positions, sinks)
+            elif self.gfx1151_attention != "off":
                 sinks = self.weights[p + ".self_attn.softmax_offset"]
                 attention = g.sink_attention(q, ak, av, positions, ap, sinks, cache.window)
             else:

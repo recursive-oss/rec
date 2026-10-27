@@ -99,6 +99,20 @@ The manifest has `development=true`; automatic updates do not provide a ROCm
 release. The standard installer should not be used to install this development
 binary.
 
+## Opt-in HIP kernels (gfx1151)
+
+`REC_GFX1151_ATTENTION=hip` (with `REC_GFX1151_DECODE=layer` and
+`REC_GFX1151_KV=k8v4`) replaces the Triton decode attention of the quantized
+full-attention layers with a HIP kernel; the default Triton paths are unchanged.
+The kernel source ships with the Python package and is compiled on first use by
+`torch.utils.cpp_extension`, which needs `ninja` (`python3 -m pip install ninja`)
+and a ROCm tree whose `hipcc --version` reports exactly `torch.version.hip`
+(`ROCM_HOME`, `ROCM_PATH`, the tree of the loaded `libamdhip64`, then `/opt/rocm`
+are tried in that order). The model compiles it once at startup (about 20 s) and
+caches the library under `REC_HIP_CACHE` (default `~/.cache/rec/hip`), keyed by
+the source, flags and Torch/HIP versions; a cached library loads without `hipcc`
+or `ninja`.
+
 ## Validation
 
 In the pinned environment, with exactly one selected qualified GPU:
