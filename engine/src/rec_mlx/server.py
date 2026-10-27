@@ -209,6 +209,7 @@ def make_server(
                 "store",
                 "grammar",
                 "parallel_tool_calls",
+                "response_format",
             }
             unknown = set(self.body) - allowed
             for field in unknown:
@@ -243,6 +244,11 @@ def make_server(
                 raise ValueError("Only neutral repetition_penalty=1 is supported")
             if self.body.get("store", False) is not False:
                 raise ValueError("Stored-completion retrieval is not supported; use store=false")
+            response_format = self.body.get("response_format")
+            if response_format is not None and response_format != {"type": "text"}:
+                raise ValueError(
+                    'Structured response_format is not supported; use {"type": "text"}'
+                )
             stop = self.body.get("stop")
             if stop is not None:
                 stops = [stop] if isinstance(stop, str) else stop

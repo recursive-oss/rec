@@ -133,6 +133,40 @@ class ServingTest(unittest.TestCase):
         self.assertIsNone(self.engine.grammars[-1])
         self.engine.constraints.tools.assert_called_once()
 
+    def test_structured_response_formats_are_rejected_before_generation(self):
+        formats = [
+            {"type": "json_object"},
+            {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "answer",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {"answer": {"type": "string"}},
+                        "required": ["answer"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+        ]
+        for response_format in formats:
+            for stream in (False, True):
+                with self.subTest(response_format=response_format, stream=stream):
+                    status, body = self.request(
+                        "B", max_tokens=1, stream=stream, response_format=response_format
+                    )
+                    self.assertEqual(status, 400)
+                    self.assertIn("response_format", str(body))
+                    self.assertEqual(self.engine.calls, [])
+
+    def test_text_response_format_is_accepted(self):
+        for response_format in (None, {"type": "text"}):
+            with self.subTest(response_format=response_format):
+                self.assertEqual(
+                    self.request("B", max_tokens=1, response_format=response_format)[0], 200
+                )
+
     def test_invalid_grammar_is_rejected(self):
         self.assertEqual(self.request("B", grammar="json")[0], 400)
         self.assertEqual(self.engine.calls, [])
