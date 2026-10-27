@@ -63,6 +63,18 @@ with tempfile.TemporaryDirectory(prefix="rec-package-test-") as td:
         "exit 1\n"
     )
     fake_flint.chmod(0o755)
+    rejected = subprocess.run(
+        [sys.executable, str(root / "packaging/build-flint-runtime.py"),
+         "--flint-serve", str(fake_flint), "--output", str(work / "bad-contract-runtime")],
+        capture_output=True, text=True,
+    )
+    assert rejected.returncode != 0 and "contract" in rejected.stderr, rejected.stderr
+    fake_flint.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = --help ]; then echo 'flint-serve --checkpoint-dir'; exit 0; fi\n"
+        "if [ \"$1\" = --runtime-contract ]; then echo '{\"schema\":1,\"engine\":\"flint-native\",\"os\":\"linux\",\"arch\":\"amd64\",\"backend\":\"hip\",\"revision\":\"3b93f9053b530488405ae9fca51d4900d6ce21f0\",\"max_context\":262144,\"arena_base_bytes\":25074426720,\"kv_bytes_per_token\":28672,\"sampler_bytes\":1951872,\"source_commit\":\"0123456789abcdef0123456789abcdef01234567\",\"source_tree\":\"89abcdef0123456789abcdef0123456789abcdef\"}'; exit 0; fi\n"
+        "exit 1\n"
+    )
     hip_runtime = work / "hip-runtime"
     subprocess.run(
         [sys.executable, str(root / "packaging/build-flint-runtime.py"),
