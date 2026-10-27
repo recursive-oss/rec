@@ -92,10 +92,12 @@ func run(args []string) error {
 	manifest := flags.String("manifest", "", "")
 	runtimeDir := flags.String("runtime-dir", "", "")
 	var contextTokens int
+	var modelDir string
 	port := 11500
 	if command == "serve" {
 		flags.IntVar(&contextTokens, "context", 0, "")
 		flags.IntVar(&port, "port", port, "")
+		flags.StringVar(&modelDir, "model-dir", "", "")
 	}
 	flags.SetOutput(io.Discard)
 	if e := flags.Parse(rest); e != nil {
@@ -127,6 +129,9 @@ func run(args []string) error {
 	if *runtimeDir != "" && *manifest == "" {
 		return fmt.Errorf("--runtime-dir requires --manifest")
 	}
+	if modelDir != "" && m.Engine != "flint-native" {
+		return fmt.Errorf("--model-dir is supported only by the native Flint engine")
+	}
 	if m.Development {
 		newScreen(os.Stderr).step(warningStyle.Render("!"), "Development bundle: this is not a qualified Flint release.", "")
 	}
@@ -139,7 +144,7 @@ func run(args []string) error {
 		}
 		return e
 	}
-	return serve(ctx, p, m, *runtimeDir, port, os.Stderr, background)
+	return serve(ctx, p, m, *runtimeDir, modelDir, port, os.Stderr, background)
 }
 
 func doctor(p Paths, m Manifest, manifestErr error) error {

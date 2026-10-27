@@ -381,7 +381,7 @@ func TestVerifyLocalModelUsesVerifiedFilesInPlace(t *testing.T) {
 	if err := os.WriteFile(entry, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	m := Manifest{Entry: "config.json", Files: []File{{
+	m := Manifest{Model: "flint", Entry: "config.json", Files: []File{{
 		Name: "config.json", Size: int64(len(data)), SHA256: digest(data),
 	}}}
 	got, err := verifyLocalModel(root, m, io.Discard)

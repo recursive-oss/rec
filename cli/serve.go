@@ -210,7 +210,7 @@ func probe(ctx context.Context, base, key, model string, phase ...func(string)) 
 	return nil
 }
 
-func serve(parent context.Context, p Paths, m Manifest, override string, port int, out io.Writer, background ...bool) error {
+func serve(parent context.Context, p Paths, m Manifest, override, modelDir string, port int, out io.Writer, background ...bool) error {
 	l, e := lock(filepath.Join(p.State, "instance.lock"))
 	if e != nil {
 		if s, err := control(p, "status"); err == nil {
@@ -273,7 +273,12 @@ func serve(parent context.Context, p Paths, m Manifest, override string, port in
 		return e
 	}
 	runtimeProgress.succeed()
-	model, e := ensureModel(ctx, p, m, out)
+	var model string
+	if modelDir != "" {
+		model, e = verifyLocalModel(modelDir, m, out)
+	} else {
+		model, e = ensureModel(ctx, p, m, out)
+	}
 	if e != nil {
 		return e
 	}

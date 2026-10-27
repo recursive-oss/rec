@@ -137,6 +137,37 @@ func ensureModel(ctx context.Context, p Paths, m Manifest, out io.Writer) (strin
 	return ensureModelWithClient(ctx, p, m, out, client)
 }
 
+// verifyLocalModel hashes the manifest-declared files in their existing
+// directory. It never copies or downloads model bytes; the native runtime
+// independently revalidates the pinned checkpoint before GPU admission.
+func verifyLocalModel(root string, m Manifest, out io.Writer) (string, error) {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	before, err := os.Lstat(abs)
+	if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("local model directory must be a real directory")
+	}
+	var total int64
+	for _, f := range m.Files {
+		total += f.Size
+	}
+	progress := newTransfer(out, "Verifying "+displayName(m.Model), "Verified "+displayName(m.Model), 0, total)
+	for _, f := range m.Files {
+		if err := verifyFileInto(filepath.Join(abs, f.Name), f, progress); err != nil {
+			progress.fail(err.Error())
+			return "", err
+		}
+	}
+	after, err := os.Lstat(abs)
+	if err != nil || !os.SameFile(before, after) {
+		return "", fmt.Errorf("local model directory changed during verification")
+	}
+	progress.succeed()
+	return filepath.Join(abs, m.Entry), nil
+}
+
 func ensureModelWithClient(ctx context.Context, p Paths, m Manifest, out io.Writer, client *http.Client) (string, error) {
 	id := modelDigest(m)
 	root := filepath.Join(p.Data, "models", id)
