@@ -23,8 +23,20 @@ class RequestError(ValueError):
 
 
 class Server(ThreadingHTTPServer):
+    """HTTP server that binds either IPv4 or IPv6, and IPv4-mapped IPv6 when asked."""
     # The default backlog of 5 resets a burst of connections before the accept loop takes them.
     request_queue_size = 32
+    def __init__(self, address, handler, **kwargs):
+        self._bind_host = address[0]
+        self.address_family = socket.AF_INET6 if ":" in address[0] else socket.AF_INET
+        super().__init__(address, handler, **kwargs)
+
+    def server_bind(self):
+        if self.address_family == socket.AF_INET6 and self._bind_host == "::":
+            # Accept IPv4 clients too, matching stdlib http.server's DualStackServer.
+            # The option must be set before bind; afterwards it fails with EINVAL.
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        super().server_bind()
 
 
 def make_server(

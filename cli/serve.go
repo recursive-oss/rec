@@ -10,10 +10,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -28,6 +30,7 @@ type Status struct {
 	Revision   string `json:"revision"`
 	Runtime    string `json:"runtime_sha256"`
 	Endpoint   string `json:"endpoint"`
+	Listen     string `json:"listen"`
 	Context    int    `json:"context"`
 	MaxContext int    `json:"max_context"`
 	Instance   string `json:"instance_sha256"`
@@ -39,10 +42,39 @@ func instanceKey(m Manifest) string {
 	return digest(b)
 }
 
-func sameInstance(s Status, m Manifest, port int) bool {
+func sameInstance(s Status, m Manifest, host string, port int) bool {
 	return s.Ready && s.Model == m.Model && s.Runtime == m.RuntimeSHA &&
 		s.Revision == m.Revision && s.Context == m.Context &&
-		s.Instance == instanceKey(m) && s.Endpoint == fmt.Sprintf("http://127.0.0.1:%d/v1", port)
+		s.Instance == instanceKey(m) && s.Listen == net.JoinHostPort(host, strconv.Itoa(port)) &&
+		s.Endpoint == clientEndpoint(host, port)
+}
+
+// parseHost validates the --host flag: IP literals only, such as 127.0.0.1 or 0.0.0.0.
+// Zoned addresses (fe80::1%en0) are rejected because they cannot appear in a URL
+// unescaped. IPv4-mapped IPv6 is unmapped so Go and the engine pick one family.
+func parseHost(host string) (netip.Addr, error) {
+	addr, err := netip.ParseAddr(host)
+	if err != nil || addr.Zone() != "" {
+		return netip.Addr{}, fmt.Errorf("--host must be an IP address, such as 127.0.0.1 or 0.0.0.0")
+	}
+	return addr.Unmap(), nil
+}
+
+// clientEndpoint maps the requested host to the address clients should connect
+// to; an unspecified bind address means the loopback of the same family.
+func clientEndpoint(host string, port int) string {
+	addr, err := parseHost(host)
+	if err != nil {
+		return fmt.Sprintf("http://%s:%d/v1", host, port)
+	}
+	if addr.IsUnspecified() {
+		if addr.Is4() {
+			addr = netip.AddrFrom4([4]byte{127, 0, 0, 1})
+		} else {
+			addr = netip.IPv6Loopback()
+		}
+	}
+	return "http://" + net.JoinHostPort(addr.String(), strconv.Itoa(port)) + "/v1"
 }
 
 func control(p Paths, action string) (Status, error) {
@@ -210,28 +242,28 @@ func probe(ctx context.Context, base, key, model string, phase ...func(string)) 
 	return nil
 }
 
-func serve(parent context.Context, p Paths, m Manifest, override string, port int, out io.Writer, background ...bool) error {
+func serve(parent context.Context, p Paths, m Manifest, override, host string, port int, out io.Writer, background ...bool) error {
 	l, e := lock(filepath.Join(p.State, "instance.lock"))
 	if e != nil {
 		if s, err := control(p, "status"); err == nil {
-			if sameInstance(s, m, port) {
+			if sameInstance(s, m, host, port) {
 				newScreen(out).succeeded(m.Model+" is already running", s.Endpoint)
 				return nil
 			}
-			return fmt.Errorf("another instance is starting or uses a different profile (running context %d, requested %d); use rec status or rec stop", s.Context, m.Context)
+			return fmt.Errorf("another instance is starting or uses a different profile (running on %s with context %d, requested %s with context %d); use rec status or rec stop", s.Listen, s.Context, net.JoinHostPort(host, strconv.Itoa(port)), m.Context)
 		}
 		return e
 	}
 	defer unlock(l)
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	address := fmt.Sprintf("127.0.0.1:%d", port)
+	address := net.JoinHostPort(host, strconv.Itoa(port))
 	check, e := net.Listen("tcp", address)
 	if e != nil {
-		return fmt.Errorf("port %d is unavailable; use --port with a free port", port)
+		return fmt.Errorf("%s is unavailable; use --host/--port with a free local address", address)
 	}
 	check.Close()
-	status := Status{Engine: m.Engine, Version: Version, Model: m.Model, Revision: m.Revision, Runtime: m.RuntimeSHA, Endpoint: "http://" + address + "/v1", Context: m.Context, MaxContext: m.contextLimit(), Instance: instanceKey(m)}
+	status := Status{Engine: m.Engine, Version: Version, Model: m.Model, Revision: m.Revision, Runtime: m.RuntimeSHA, Endpoint: clientEndpoint(host, port), Listen: address, Context: m.Context, MaxContext: m.contextLimit(), Instance: instanceKey(m)}
 	var mu sync.Mutex
 	socket := filepath.Join(p.State, "control.sock")
 	os.Remove(socket)
@@ -284,7 +316,7 @@ func serve(parent context.Context, p Paths, m Manifest, override string, port in
 	if e != nil {
 		return e
 	}
-	executable, args, extra := launchCommand(p, m, runtimeDir, model, port)
+	executable, args, extra := launchCommand(p, m, runtimeDir, model, host, port)
 	self, e := os.Executable()
 	if e != nil {
 		return e
@@ -324,7 +356,9 @@ func serve(parent context.Context, p Paths, m Manifest, override string, port in
 	probeCtx, stopProbe := context.WithTimeout(ctx, 10*time.Minute)
 	defer stopProbe()
 	ready := make(chan error, 1)
-	go func() { ready <- probe(probeCtx, "http://"+address, key, m.Model, loading.phase) }()
+	go func() {
+		ready <- probe(probeCtx, strings.TrimSuffix(status.Endpoint, "/v1"), key, m.Model, loading.phase)
+	}()
 	select {
 	case e = <-done:
 		loading.fail()
@@ -350,7 +384,7 @@ func serve(parent context.Context, p Paths, m Manifest, override string, port in
 	mu.Lock()
 	status.Ready = true
 	mu.Unlock()
-	printReady(ui, m, status.Endpoint, len(background) > 0 && background[0])
+	printReady(ui, m, status, len(background) > 0 && background[0])
 	select {
 	case <-ctx.Done():
 		return nil
@@ -360,22 +394,32 @@ func serve(parent context.Context, p Paths, m Manifest, override string, port in
 	}
 }
 
-func printReady(ui *screen, m Manifest, endpoint string, background bool) {
-	var rows strings.Builder
-	for i, row := range [][2]string{
-		{"Base URL", endpoint},
+func printReady(ui *screen, m Manifest, s Status, background bool) {
+	host, _, _ := net.SplitHostPort(s.Listen)
+	listen, _ := netip.ParseAddr(host)
+	rows := [][2]string{{"Base URL", s.Endpoint}}
+	// Only a wildcard bind differs from the Base URL host.
+	if listen.IsUnspecified() {
+		rows = append(rows, [2]string{"Listen", s.Listen + " (all interfaces)"})
+	}
+	rows = append(rows, [][2]string{
 		{"Model", m.Model},
 		{"Checkpoint", m.Revision},
 		{"Context", m.contextSummary()},
 		{"API key", accentStyle.Render("rec auth token")},
-	} {
+	}...)
+	var panel strings.Builder
+	for i, row := range rows {
 		if i > 0 {
-			rows.WriteString("\n")
+			panel.WriteString("\n")
 		}
-		rows.WriteString(faintStyle.Render(fmt.Sprintf("%-10s", row[0])) + "  " + row[1])
+		panel.WriteString(faintStyle.Render(fmt.Sprintf("%-10s", row[0])) + "  " + row[1])
 	}
 	ui.println("")
-	ui.println(panelStyle.Render(successStyle.Render("✓ ") + boldStyle.Render(m.Model+" is ready.") + "\n\n" + rows.String()))
+	ui.println(panelStyle.Render(successStyle.Render("✓ ") + boldStyle.Render(m.Model+" is ready.") + "\n\n" + panel.String()))
+	if !listen.IsLoopback() {
+		ui.step(warningStyle.Render("!"), "Reachable from the network over unencrypted HTTP. Use only on trusted networks.", "")
+	}
 	if background {
 		ui.println(faintStyle.Render("Running in the background. Use `rec stop` to stop."))
 	} else {

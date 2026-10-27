@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
@@ -309,7 +310,10 @@ func serverPhase(log string) string {
 
 func validateClientStatus(s Status) error {
 	endpoint, err := url.Parse(s.Endpoint)
-	if err != nil || endpoint.Scheme != "http" || endpoint.Hostname() != "127.0.0.1" || endpoint.Port() == "" || endpoint.Path != "/v1" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+	if err != nil || endpoint.Scheme != "http" || endpoint.Port() == "" || endpoint.Path != "/v1" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return fmt.Errorf("invalid local Rec endpoint")
+	}
+	if _, err := netip.ParseAddr(endpoint.Hostname()); err != nil {
 		return fmt.Errorf("invalid local Rec endpoint")
 	}
 	if !s.Ready || s.Model != "flint" || s.Context < 2048 {
