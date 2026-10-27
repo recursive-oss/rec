@@ -14,6 +14,12 @@ import tarfile
 import tempfile
 from pathlib import Path
 
+TRUSTED_NATIVE_RUNTIME = {
+    "binary": "9217b560f9b71b65ce0587eb9d57aca41000b2afa527dc94dc984ee6d28c84d7",
+    "commit": "13965eff710a5de3b031b68b77604b232616502a",
+    "tree": "de744eb50a9f5c0e15faaccdedadb471ca420897",
+}
+
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
@@ -39,6 +45,8 @@ def validate_native_runtime(runtime_dir, manifest, metadata):
             or not all(re.fullmatch(r"[0-9a-f]{40}", str(trusted[key] or ""))
                        for key in ("commit", "tree"))):
         raise ValueError("trusted runtime pins are missing")
+    if trusted != TRUSTED_NATIVE_RUNTIME:
+        raise ValueError("trusted runtime manifest pins do not match the reviewed package policy")
     if metadata["binary_sha256"] != trusted["binary"]:
         raise ValueError("trusted runtime binary digest mismatch")
     contract = metadata["runtime_contract"]
