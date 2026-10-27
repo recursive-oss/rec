@@ -360,7 +360,7 @@ func TestManifestAcceptsPinnedNativeHIPTarget(t *testing.T) {
 	m := Manifest{
 		Engine: "flint-native", Schema: 1, Model: "flint",
 		Revision: "3b93f9053b530488405ae9fca51d4900d6ce21f0",
-		OS:       "linux", Arch: "amd64", Backend: "hip", Context: 262144,
+		OS:       "linux", Arch: "amd64", Backend: "hip", Context: 262144, MaxContext: 262144,
 		MinRAM: 1, Entry: "config.json",
 		Files:        []File{{Name: "config.json", Size: 1, SHA256: digest([]byte("x")), URL: "https://example.com/config.json"}},
 		RuntimeSHA:   digest([]byte("runtime")),
@@ -372,6 +372,19 @@ func TestManifestAcceptsPinnedNativeHIPTarget(t *testing.T) {
 	}
 	if got.Engine != "flint-native" || got.Backend != "hip" {
 		t.Fatalf("native HIP target identity lost: %+v", got)
+	}
+	for name, change := range map[string]func(*Manifest){
+		"revision":   func(value *Manifest) { value.Revision = "unpinned" },
+		"max context": func(value *Manifest) { value.MaxContext = 262145 },
+		"context":     func(value *Manifest) { value.Context, value.MaxContext = 262145, 262145 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := m
+			change(&bad)
+			if _, err := decodeManifest(mustJSON(t, bad)); err == nil {
+				t.Fatal("unpinned native contract accepted")
+			}
+		})
 	}
 }
 
