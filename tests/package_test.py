@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import hashlib
 import json
 import platform
 import re
@@ -72,7 +73,7 @@ with tempfile.TemporaryDirectory(prefix="rec-package-test-") as td:
     fake_flint.write_text(
         "#!/bin/sh\n"
         "if [ \"$1\" = --help ]; then echo 'flint-serve --checkpoint-dir'; exit 0; fi\n"
-        "if [ \"$1\" = --runtime-contract ]; then echo '{\"schema\":1,\"engine\":\"flint-native\",\"os\":\"linux\",\"arch\":\"amd64\",\"backend\":\"hip\",\"revision\":\"3b93f9053b530488405ae9fca51d4900d6ce21f0\",\"max_context\":262144,\"arena_base_bytes\":25074426720,\"kv_bytes_per_token\":28672,\"sampler_bytes\":1951872,\"source_commit\":\"0123456789abcdef0123456789abcdef01234567\",\"source_tree\":\"89abcdef0123456789abcdef0123456789abcdef\"}'; exit 0; fi\n"
+        "if [ \"$1\" = --runtime-contract ]; then echo '{\"schema\":1,\"engine\":\"flint-native\",\"os\":\"linux\",\"arch\":\"amd64\",\"backend\":\"hip\",\"revision\":\"3b93f9053b530488405ae9fca51d4900d6ce21f0\",\"max_context\":262144,\"arena_base_bytes\":25074426720,\"kv_bytes_per_token\":28672,\"sampler_bytes\":1951872,\"source_commit\":\"0123456789abcdef0123456789abcdef01234567\",\"source_tree\":\"89abcdef0123456789abcdef0123456789abcdef\",\"source_clean\":true}'; exit 0; fi\n"
         "exit 1\n"
     )
     hip_runtime = work / "hip-runtime"
@@ -82,7 +83,10 @@ with tempfile.TemporaryDirectory(prefix="rec-package-test-") as td:
         check=True,
     )
     identity = json.loads((hip_runtime / "build.json").read_text())
-    assert identity == {"engine": "flint-native", "os": "linux", "arch": "amd64", "backend": "hip"}
+    target = {key: identity[key] for key in ("engine", "os", "arch", "backend")}
+    assert target == {"engine": "flint-native", "os": "linux", "arch": "amd64", "backend": "hip"}
+    assert identity["binary_sha256"] == hashlib.sha256((hip_runtime / "flint-serve").read_bytes()).hexdigest()
+    assert identity["runtime_contract"]["source_clean"] is True
     assert (hip_runtime / "flint-serve").stat().st_mode & 0o111
     sentinel = hip_runtime / "keep-me"
     sentinel.write_text("do not delete\n")
