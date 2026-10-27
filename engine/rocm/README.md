@@ -103,12 +103,13 @@ binary.
 
 `REC_GFX1151_ATTENTION=hip` (with `REC_GFX1151_DECODE=layer` and
 `REC_GFX1151_KV=k8v4`) replaces the Triton decode attention of the quantized
-full-attention layers with a HIP kernel; the default Triton paths are unchanged.
-The kernel source ships with the Python package and is compiled on first use by
+full-attention layers with a HIP kernel, and `REC_GFX1151_GEMV=hip` (with
+`REC_GFX1151_DECODE=layer`) replaces the decode INT4 GEMVs; the default Triton
+paths are unchanged. The kernel sources ship with the Python package and is compiled on first use by
 `torch.utils.cpp_extension`, which needs `ninja` (`python3 -m pip install ninja`)
 and a ROCm tree whose `hipcc --version` reports exactly `torch.version.hip`
 (`ROCM_HOME`, `ROCM_PATH`, the tree of the loaded `libamdhip64`, then `/opt/rocm`
-are tried in that order). The model compiles it once at startup (about 20 s) and
+are tried in that order). The model compiles each enabled one once at startup (about 20 s) and
 caches the library under `REC_HIP_CACHE` (default `~/.cache/rec/hip`), keyed by
 the source, flags and Torch/HIP versions; a cached library loads without `hipcc`
 or `ninja`.

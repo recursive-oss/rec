@@ -112,3 +112,42 @@ def sink_attention_k8v4(q, cache, extent, positions, sinks):
         extent,
         splits,
     )
+
+
+# K=6144 (dense MLP down of the two mlp_only layers) is slower in HIP and stays on Triton.
+_GEMV_K = (512, 1024, 2048, 4096)
+
+
+def gemv_w4(x, w, s, b, residual=None):
+    """HIP version of gfx1151.gemv_w4 for one token: x [1, K], packed w [N, K/2]."""
+    n, k = w.shape[-2], w.shape[-1] * 2
+    if k not in _GEMV_K or x.shape[0] != 1:
+        from .. import gfx1151
+
+        return gfx1151.gemv_w4(x, w, s, b, residual=residual)
+    # Persistent block caps, swept per shape on gfx1151 (bench/hip_gemv_sweep.py).
+    blocks = 640 if k == 4096 or n > 65536 else 320
+    return load("gemv").gemv_w4(x, w, s, b, residual, blocks)
+
+
+def gate_up_w4(x, wg, sg, bg, wu, su, bu, ids=None):
+    """HIP version of gfx1151.gate_up_w4: silu(x @ gate^T) * (x @ up^T), per expert if ids."""
+    k = wg.shape[-1] * 2
+    if k not in _GEMV_K or x.shape[0] != 1:
+        from .. import gfx1151
+
+        return gfx1151.gate_up_w4(x, wg, sg, bg, wu, su, bu, ids=ids)
+    return load("gemv").gate_up_w4(x, wg, sg, bg, wu, su, bu, ids, 160 if ids is not None else 80)
+
+
+def down_combine_w4(act, wd, sd, bd, ids, scores, shared_act, ws, ss, bs, residual):
+    """HIP version of gfx1151.down_combine_w4 (routed K 512, shared K 1024, top-6)."""
+    if (wd.shape[-1] * 2, ws.shape[-1] * 2, ids.numel()) != (512, 1024, 6):
+        from .. import gfx1151
+
+        return gfx1151.down_combine_w4(
+            act, wd, sd, bd, ids, scores, shared_act, ws, ss, bs, residual
+        )
+    return load("gemv").down_combine_w4(
+        act, wd, sd, bd, ids, scores, shared_act, ws, ss, bs, residual
+    )

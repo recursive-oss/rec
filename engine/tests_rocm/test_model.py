@@ -224,6 +224,7 @@ class QuantizedKVFlint(unittest.TestCase):
             "REC_GFX1151_KV": "k8v4",
             "REC_GFX1151_DECODE": decode,
             "REC_GFX1151_ATTENTION": attention,
+            "REC_GFX1151_GEMV": "off",
         }
         with patch.dict("os.environ", env):
             model = FlintModel(self.path, capacity=1024, reference=reference)

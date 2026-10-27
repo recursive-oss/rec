@@ -146,6 +146,7 @@ class FlintModel:
         self.gfx1151_attention = os.environ.get("REC_GFX1151_ATTENTION", "off")
         self.gfx1151_prefill = os.environ.get("REC_GFX1151_PREFILL", "off")
         self.gfx1151_kv = os.environ.get("REC_GFX1151_KV", "bf16")
+        self.gfx1151_gemv = os.environ.get("REC_GFX1151_GEMV", "off")
         if self.gfx1151_kv not in ("bf16", "k8v4"):
             raise ValueError("Unknown REC_GFX1151_KV")
         if self.gfx1151_prefill not in ("off", "grouped"):
@@ -172,6 +173,14 @@ class FlintModel:
             and torch.cuda.get_device_properties(device).gcnArchName.split(":")[0] != "gfx1151"
         ):
             raise ValueError("REC_GFX1151_DECODE is qualified only on gfx1151")
+        if self.gfx1151_gemv not in ("off", "hip"):
+            raise ValueError("Unknown REC_GFX1151_GEMV")
+        if self.gfx1151_gemv != "off" and self.gfx1151_decode != "layer":
+            raise ValueError("REC_GFX1151_GEMV requires REC_GFX1151_DECODE=layer")
+        if self.gfx1151_gemv == "hip" and not reference:
+            from . import hip
+
+            hip.load("gemv")
         if self.gfx1151_attention == "hip":
             # HIP for the k8v4 full-attention layers; BF16 window layers keep the Triton split.
             if self.gfx1151_kv != "k8v4":
@@ -633,6 +642,7 @@ class FlintModel:
         from . import gfx1151 as g
         from . import hip
 
+        mv = hip if self.gfx1151_gemv == "hip" else g
         c = self.config
         eps = c["rms_norm_eps"]
         heads, kv_heads, dim = c["num_attention_heads"], c["num_key_value_heads"], c["head_dim"]
@@ -659,7 +669,7 @@ class FlintModel:
             p = f"model.layers.{i}"
             w = self.weights
             h = g.rms_norm(x, w[p + ".input_layernorm.weight"], eps)
-            qkv = g.gemv_w4(h, *self._qkv[i])
+            qkv = mv.gemv_w4(h, *self._qkv[i])
             q = g.qk_post(
                 qkv,
                 w[p + ".self_attn.q_norm.weight"],
@@ -688,7 +698,7 @@ class FlintModel:
                     ak, av = cache.dense(extent, torch.float32)
                 attention = self._attend(q, ak, av, ap, positions, cache, p, 1, x.dtype)
             o = [w[p + ".self_attn.o_proj." + n] for n in ("weight", "scales", "biases")]
-            x = g.gemv_w4(attention.reshape(1, -1), *o, residual=x)
+            x = mv.gemv_w4(attention.reshape(1, -1), *o, residual=x)
             h = g.rms_norm(x, w[p + ".post_attention_layernorm.weight"], eps)
             if i in c["mlp_only_layers"]:
                 mlp = p + ".mlp"
@@ -696,7 +706,7 @@ class FlintModel:
                     [w[f"{mlp}.{n}_proj.{part}"] for part in ("weight", "scales", "biases")]
                     for n in ("gate", "up", "down")
                 ]
-                x = g.gemv_w4(g.gate_up_w4(h, *gate, *up), *down, residual=x)
+                x = mv.gemv_w4(mv.gate_up_w4(h, *gate, *up), *down, residual=x)
             else:
                 ids, scores = g.route(
                     h,
@@ -710,14 +720,14 @@ class FlintModel:
                     for base in (routed, shared)
                     for n in ("gate", "up", "down")
                 ]
-                act = g.gate_up_w4(h, *rg, *ru, ids=ids)
-                shared_act = g.gate_up_w4(h, *sg, *su)
-                x = g.down_combine_w4(act, *rd, ids, scores, shared_act, *sd, x)
+                act = mv.gate_up_w4(h, *rg, *ru, ids=ids)
+                shared_act = mv.gate_up_w4(h, *sg, *su)
+                x = mv.down_combine_w4(act, *rd, ids, scores, shared_act, *sd, x)
             if trace:
                 self.last_trace.append(x.clone())
         self.position += 1
         h = g.rms_norm(x, self.weights["model.norm.weight"], eps)
-        logits = g.gemv_w4(
+        logits = mv.gemv_w4(
             h, *[self.weights["lm_head." + n] for n in ("weight", "scales", "biases")]
         ).float()
         if self.graph_mode:
