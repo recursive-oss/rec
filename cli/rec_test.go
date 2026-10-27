@@ -441,6 +441,15 @@ func TestNativeHIPRequiresLocalModelDirectory(t *testing.T) {
 	}
 }
 
+func TestNativeHIPLaunchDoesNotAutostartWithoutModelDirectory(t *testing.T) {
+	if err := validateLaunchAutostart(Manifest{Engine: "flint-native"}); err == nil {
+		t.Fatal("native launch accepted downloader/background autostart path")
+	}
+	if err := validateLaunchAutostart(Manifest{Engine: "mlx"}); err != nil {
+		t.Fatalf("MLX launch autostart was rejected: %v", err)
+	}
+}
+
 func TestNativeHIPPreflightOnLinuxAMD64(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Skip("native HIP target is Linux/amd64")

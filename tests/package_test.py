@@ -104,4 +104,45 @@ with tempfile.TemporaryDirectory(prefix="rec-package-test-") as td:
         capture_output=True, text=True,
     )
     assert rejected.returncode != 0 and "symlink" in rejected.stderr, rejected.stderr
+
+    # A successful probe must be bound to the exact inode subsequently staged.
+    mutating = work / "mutating-flint-serve"
+    contract_json = json.dumps(identity["runtime_contract"], separators=(",", ":"))
+    mutating.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = --help ]; then echo 'flint-serve --checkpoint-dir'; exit 0; fi\n"
+        f"if [ \"$1\" = --runtime-contract ]; then echo '{contract_json}'; "
+        "printf '#!/bin/sh\\necho MUTATED-NO-CONTRACT\\n' > \"$0.new\"; "
+        "chmod 755 \"$0.new\"; mv \"$0.new\" \"$0\"; exit 0; fi\n"
+        "exit 1\n"
+    )
+    mutating.chmod(0o755)
+    bound_runtime = work / "identity-bound-runtime"
+    subprocess.run(
+        [sys.executable, str(root / "packaging/build-flint-runtime.py"),
+         "--flint-serve", str(mutating), "--output", str(bound_runtime)],
+        check=True,
+    )
+    staged = bound_runtime / "flint-serve"
+    assert b"MUTATED-NO-CONTRACT" not in staged.read_bytes(), staged.read_bytes()
+    assert subprocess.run([str(staged), "--runtime-contract"], capture_output=True).returncode == 0
+
+    # Native packages must not trust a four-field build.json around an arbitrary executable.
+    hip_manifest = root / "packaging/flint-int4-hip.json"
+    arbitrary = work / "arbitrary-runtime"
+    arbitrary.mkdir()
+    arbitrary_server = arbitrary / "flint-serve"
+    arbitrary_server.write_text("#!/bin/sh\nexit 0\n")
+    arbitrary_server.chmod(0o755)
+    arbitrary_m = json.loads(hip_manifest.read_text())
+    (arbitrary / "build.json").write_text(
+        json.dumps({k: arbitrary_m[k] for k in ("engine", "os", "arch", "backend")})
+    )
+    rejected = subprocess.run(
+        [sys.executable, str(root / "packaging/package.py"),
+         "--runtime-dir", str(arbitrary), "--manifest", str(hip_manifest),
+         "--version", "0.1.0-test", "--output", str(work / "bad-native-rec")],
+        capture_output=True, text=True,
+    )
+    assert rejected.returncode != 0 and "runtime contract" in rejected.stderr, rejected.stderr
     print("Packaging, archive validation and runtime/manifest mismatch rejection passed")
