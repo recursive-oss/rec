@@ -871,6 +871,161 @@ def sink_attention_k8v4(q, cache, extent, positions, sinks, config=None):
 
 
 @tr.jit
+def _prefill_tile(
+    q,
+    m,
+    total,
+    acc,
+    K,
+    V,
+    KP,
+    qpos,
+    start,
+    end,
+    kv,
+    SCALE,
+    KH: tl.constexpr,
+    D: tl.constexpr,
+    WINDOW: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+):
+    index = start + tl.arange(0, BLOCK_N)
+    inside = index < end
+    kp = tl.load(KP + index, inside, -1)
+    valid = (kp[None, :] >= 0) & (kp[None, :] <= qpos[:, None])
+    if WINDOW:
+        valid &= kp[None, :] > qpos[:, None] - WINDOW
+    d = tl.arange(0, D)
+    offset = index[:, None] * (KH * D) + kv * D + d[None, :]
+    k = tl.load(K + offset, inside[:, None], 0)
+    score = tl.dot(q, tl.trans(k))
+    # As eager torch: dividing by a Python scalar multiplies by its FP32 reciprocal.
+    score = score * SCALE
+    score = tl.where(valid, score, -float("inf"))
+    new_m = tl.maximum(m, tl.max(score, 1))
+    safe = tl.where(new_m == -float("inf"), 0.0, new_m)
+    correction = libdevice.exp(m - safe)
+    p = libdevice.exp(score - safe[:, None])
+    v = tl.load(V + offset, inside[:, None], 0)
+    high = p.to(tl.bfloat16)
+    low = (p - high.to(tl.float32)).to(tl.bfloat16)
+    acc = acc * correction[:, None] + (tl.dot(high, v) + tl.dot(low, v))
+    total = total * correction + tl.sum(p, 1)
+    return new_m, total, acc
+
+
+@tr.jit
+def _prefill_attention(
+    Q,
+    K,
+    V,
+    KP,
+    QP,
+    SINK,
+    OUT,
+    SCALE,
+    COUNT,
+    NEW_BASE,
+    H: tl.constexpr,
+    KH: tl.constexpr,
+    G: tl.constexpr,
+    D: tl.constexpr,
+    WINDOW: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+):
+    """Flash-style sink attention for a prefill chunk; rows are (query, head) pairs of one KV head."""
+    block = tl.program_id(0)
+    kv = tl.program_id(1)
+    row = block * BLOCK_M + tl.arange(0, BLOCK_M)
+    live = row < COUNT * G
+    qi = row // G
+    head = kv * G + row % G
+    d = tl.arange(0, D)
+    q = tl.load(Q + (qi * H + head)[:, None] * D + d[None, :], live[:, None], 0)
+    qpos = tl.load(QP + qi, live, -1)
+    first = block * BLOCK_M // G
+    last = tl.minimum((block * BLOCK_M + BLOCK_M - 1) // G, COUNT - 1)
+    m = tl.full((BLOCK_M,), -float("inf"), tl.float32)
+    total = tl.zeros((BLOCK_M,), tl.float32)
+    acc = tl.zeros((BLOCK_M, D), tl.float32)
+    # Key NEW_BASE + i is query i's own key; older keys are a full-attention prefix or a window ring.
+    end = NEW_BASE + last + 1
+    if WINDOW:
+        for start in range(0, NEW_BASE, BLOCK_N):
+            m, total, acc = _prefill_tile(
+                q,
+                m,
+                total,
+                acc,
+                K,
+                V,
+                KP,
+                qpos,
+                start,
+                NEW_BASE,
+                kv,
+                SCALE,
+                KH,
+                D,
+                WINDOW,
+                BLOCK_N,
+            )
+        lo = NEW_BASE + tl.maximum(first - WINDOW + 1, 0)
+    else:
+        lo = 0
+    for start in range(lo, end, BLOCK_N):
+        m, total, acc = _prefill_tile(
+            q, m, total, acc, K, V, KP, qpos, start, end, kv, SCALE, KH, D, WINDOW, BLOCK_N
+        )
+    # The learned sink is one more softmax column that contributes no value.
+    sink = tl.load(SINK + head, live, 0.0)
+    peak = tl.maximum(m, sink)
+    scale = libdevice.exp(m - peak)
+    total = total * scale + libdevice.exp(sink - peak)
+    out = tl.div_rn(acc * scale[:, None], total[:, None] + tl.zeros_like(acc))
+    tl.store(
+        OUT + (qi * H + head)[:, None] * D + d[None, :], out.to(OUT.dtype.element_ty), live[:, None]
+    )
+
+
+_PREFILL_ATTENTION_CONFIG = (32, 16, 4)  # (query, head) rows, keys per tile, warps
+
+
+def prefill_attention(
+    q, key, value, positions, kpositions, sinks, window=None, dtype=None, config=None
+):
+    """Chunk attention: q [C, H, D]; key/value [T, KH, D] BF16 whose last C rows are the chunk's own keys."""
+    count, heads, dim = q.shape
+    slots, kv_heads, _ = key.shape
+    group = heads // kv_heads
+    block_m, block_n, warps = config or _PREFILL_ATTENTION_CONFIG
+    out = torch.empty(q.shape, device=q.device, dtype=dtype or q.dtype)
+    _prefill_attention[(tr.cdiv(count * group, block_m), kv_heads)](
+        q.contiguous(),
+        key.contiguous(),
+        value.contiguous(),
+        kpositions,
+        positions,
+        sinks,
+        out,
+        (1 / torch.tensor(dim**0.5, dtype=torch.float32)).item(),
+        count,
+        slots - count,
+        heads,
+        kv_heads,
+        group,
+        dim,
+        window or 0,
+        block_m,
+        block_n,
+        num_warps=warps,
+        enable_fp_fusion=False,
+    )
+    return out
+
+
+@tr.jit
 def _moe_tile_dot_joined(
     X,
     W,

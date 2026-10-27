@@ -427,5 +427,88 @@ class QuantizedKV(unittest.TestCase):
         self.assertTrue(torch.equal(restored[0], keys) and torch.equal(restored[1], values))
 
 
+@unittest.skipUnless(IS_GFX1151, "fused prefill attention is qualified only on gfx1151")
+class PrefillAttention(unittest.TestCase):
+    def chunk(self, depth, count, window, kv_heads=4, heads=32, dim=128, seed=0):
+        """A chunk's q and the attended K/V: a full-attention prefix or a window ring, then the chunk's own keys."""
+        gen = torch.Generator(device="cuda").manual_seed(seed)
+
+        def rand(*shape):
+            return (torch.randn(*shape, device="cuda", generator=gen) * 1.5).bfloat16()
+
+        positions = torch.arange(depth, depth + count, device="cuda", dtype=torch.int32)
+        if window:
+            old = torch.full((window,), -1, device="cuda", dtype=torch.int32)
+            written = torch.arange(max(0, depth - window), depth, device="cuda", dtype=torch.int32)
+            old[written.long() % window] = written
+        else:
+            old = torch.arange(depth, device="cuda", dtype=torch.int32)
+        ak, av = rand(old.numel() + count, kv_heads, dim), rand(old.numel() + count, kv_heads, dim)
+        q, sinks = rand(count, heads, dim), rand(heads).float()
+        return q, ak, av, torch.cat((old, positions)), positions, sinks
+
+    def truth(self, q, ak, av, ap, positions, sinks, window):
+        count, heads, dim = q.shape
+        kv_heads = ak.shape[1]
+        keep = (ap[None] >= 0) & (ap[None] <= positions[:, None])
+        if window:
+            keep &= ap[None] > positions[:, None] - window
+        qq = q.double().view(count, kv_heads, heads // kv_heads, dim)
+        score = torch.einsum("mkgd,nkd->kgmn", qq, ak.double()) / dim**0.5
+        score = score.masked_fill(~keep, -float("inf"))
+        sink = sinks.double().view(kv_heads, -1)[..., None, None].expand(-1, -1, count, 1)
+        probs = torch.softmax(torch.cat((score, sink), -1), -1)[..., :-1]
+        return torch.einsum("kgmn,nkd->mkgd", probs, av.double()).reshape(count, heads, dim)
+
+    def test_full_and_window_chunks(self):
+        cases = [
+            (0, 1, None),
+            (0, 256, None),
+            (5, 3, None),  # rows not a multiple of the tile
+            (1000, 256, None),
+            (4093, 77, None),
+            (0, 1024, None),
+            (0, 256, 513),  # empty ring
+            (3, 256, 513),  # ring not yet wrapped
+            (513, 256, 513),
+            (5000, 256, 513),  # wrapped ring
+            (5000, 1024, 513),  # chunk longer than the window skips its oldest keys
+            (100, 70, 64),  # non-Flint sizes take the same paths
+        ]
+        for depth, count, window in cases:
+            with self.subTest(depth=depth, count=count, window=window):
+                q, ak, av, ap, positions, sinks = self.chunk(depth, count, window)
+                got = g.prefill_attention(q, ak, av, positions, ap, sinks, window).double()
+                want = self.truth(q, ak, av, ap, positions, sinks, window)
+                # BF16 output rounding alone is ~1.8e-3 against FP64.
+                self.assertLess(((got - want).norm() / want.norm()).item(), 2.5e-3)
+        with self.subTest("fixture shape"):
+            q, ak, av, ap, positions, sinks = self.chunk(40, 9, None, kv_heads=1, heads=2, dim=32)
+            got = g.prefill_attention(q, ak, av, positions, ap, sinks).double()
+            want = self.truth(q, ak, av, ap, positions, sinks, None)
+            self.assertLess(((got - want).norm() / want.norm()).item(), 2.5e-3)
+
+    def test_detector_catches_perturbed_keys(self):
+        from rec_rocm.attention import query_tiled_attention
+
+        q, ak, av, ap, positions, sinks = self.chunk(2048, 256, None, seed=5)
+        eager = query_tiled_attention(q, ak, av, sinks, positions, ap)
+        broken = ak.clone()
+        flat = broken.view(torch.int16).view(-1)
+        gen = torch.Generator(device="cuda").manual_seed(6)
+        flat[torch.randperm(flat.numel(), device="cuda", generator=gen)[: flat.numel() // 100]] += 1
+        clean = (
+            (g.prefill_attention(q, ak, av, positions, ap, sinks) == eager).float().mean().item()
+        )
+        wrong = (
+            (g.prefill_attention(q, broken, av, positions, ap, sinks) == eager)
+            .float()
+            .mean()
+            .item()
+        )
+        self.assertGreater(clean, 0.98)
+        self.assertLess(wrong, 0.85)
+
+
 if __name__ == "__main__":
     unittest.main()

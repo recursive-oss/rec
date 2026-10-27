@@ -147,12 +147,17 @@ class FlintModel:
         self.gfx1151_prefill = os.environ.get("REC_GFX1151_PREFILL", "off")
         self.gfx1151_kv = os.environ.get("REC_GFX1151_KV", "bf16")
         self.gfx1151_gemv = os.environ.get("REC_GFX1151_GEMV", "off")
+        self.gfx1151_prefill_attention = os.environ.get("REC_GFX1151_PREFILL_ATTENTION", "off")
         if self.gfx1151_kv not in ("bf16", "k8v4"):
             raise ValueError("Unknown REC_GFX1151_KV")
         if self.gfx1151_prefill not in ("off", "grouped"):
             raise ValueError("Unknown REC_GFX1151_PREFILL")
         if self.gfx1151_prefill != "off" and self.rdna4_prefill != "off":
             raise ValueError("REC_GFX1151_PREFILL replaces REC_RDNA4_PREFILL")
+        if self.gfx1151_prefill_attention not in ("off", "fused"):
+            raise ValueError("Unknown REC_GFX1151_PREFILL_ATTENTION")
+        if self.gfx1151_prefill_attention != "off" and self.rdna4_attention in ("all", "mask"):
+            raise ValueError("REC_GFX1151_PREFILL_ATTENTION replaces REC_RDNA4_ATTENTION=all/mask")
         if self.gfx1151_attention not in ("off", "split", "hip"):
             raise ValueError("Unknown REC_GFX1151_ATTENTION")
         if self.gfx1151_attention != "off" and self.gfx1151_decode != "layer":
@@ -737,6 +742,10 @@ class FlintModel:
     def _attend(self, q, ak, av, ap, positions, cache, p, count, dtype):
         c = self.config
         sinks = self.weights[p + ".self_attn.softmax_offset"].float()
+        if count > 1 and self.gfx1151_prefill_attention == "fused" and not self.reference:
+            from .gfx1151 import prefill_attention
+
+            return prefill_attention(q, ak, av, positions, ap, sinks, cache.window, dtype)
         if not self.reference and (
             self.rdna4_attention == "all" or (self.rdna4_attention == "decode" and count == 1)
         ):

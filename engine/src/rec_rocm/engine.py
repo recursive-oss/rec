@@ -65,6 +65,8 @@ class Engine:
                 "attention": self.model.gfx1151_attention,
                 "prefill": self.model.gfx1151_prefill,
                 "kv": self.model.gfx1151_kv,
+                "gemv": self.model.gfx1151_gemv,
+                "prefill_attention": self.model.gfx1151_prefill_attention,
             },
             "dense_cache_bytes": sum(
                 t.numel() * t.element_size() for t in self.model.dense_cache.values()
