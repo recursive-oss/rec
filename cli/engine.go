@@ -7,6 +7,21 @@ import (
 )
 
 func launchCommand(p Paths, m Manifest, runtimeDir, model string, port int) (string, []string, []string) {
+	if m.Engine == "flint-native" {
+		const base = uint64(25074426720)
+		const perToken = uint64(14 * 2048)
+		const logits = uint64(150144 * 13)
+		budget := base + uint64(m.Context-1)*perToken + logits
+		modelDir := filepath.Dir(model)
+		return filepath.Join(runtimeDir, "flint-serve"), []string{
+			"--model", modelDir, "--checkpoint-dir", modelDir,
+			"--context-capacity", strconv.Itoa(m.Context),
+			"--device-budget", strconv.FormatUint(budget, 10),
+			"--bind", "127.0.0.1", "--port", strconv.Itoa(port),
+			"--queue-limit", "8", "--api-key-file", filepath.Join(p.Config, "api-key"),
+			"--served-model", m.Model, "--enforce-tool-schemas",
+		}, nil
+	}
 	return filepath.Join(runtimeDir, runtimeServer), []string{
 		"serve", m.Model, "--model-dir", filepath.Dir(model), "--manifest", model,
 		"--port", strconv.Itoa(port), "--context-limit", strconv.Itoa(m.Context),
