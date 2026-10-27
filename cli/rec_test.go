@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -408,6 +409,16 @@ func TestAppleChipAllowlist(t *testing.T) {
 		if (checkAppleChip(chip) == nil) != ok {
 			t.Fatalf("%s: want supported=%t", chip, ok)
 		}
+	}
+}
+
+func TestNativeHIPPreflightOnLinuxAMD64(t *testing.T) {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("native HIP target is Linux/amd64")
+	}
+	m := Manifest{Engine: "flint-native", OS: "linux", Arch: "amd64", Backend: "hip", MinRAM: 1}
+	if err := preflight(m); err != nil {
+		t.Fatalf("native HIP host rejected: %v", err)
 	}
 }
 
