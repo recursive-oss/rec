@@ -171,6 +171,51 @@ class RoutingTests(unittest.TestCase):
             )
             self.assertTrue(mx.array_equal(trace[2048:], expected).item(), seed)
 
+    def test_attention_loop_resolves_each_kv_address_once(self):
+        # Per-element KVView indexing recomputes the block select eight times per token.
+        loop = function(megakernel._HEADER, "attention_partial_path_w53")
+        loop = loop[loop.index("#pragma clang loop") :]
+        self.assertNotIn("key_base[", loop)
+        self.assertNotIn("value_base[", loop)
+        self.assertEqual(loop.count("address("), 2)
+
+    def test_row_address_matches_element_indexing_across_kv_blocks(self):
+        header = megakernel._HEADER
+        header = header[header.index("struct KVView") :]
+        header = header[: header.index("};") + 2]
+        source = """
+    uint t=thread_position_in_grid.x,token=tokens[t/128],lane=(t/4)%32,j=t%4;
+    KVView base=KVView{p0,p1,p2,p3,0u,65536u,true}.head(1,lane*4);
+    out[2*t]=as_type<ushort>(base.address(token*128)[j]);
+    out[2*t+1]=as_type<ushort>(base[token*128+j]);
+"""
+        kernel = mx.fast.metal_kernel(
+            name="kv_row_address_blocks",
+            input_names=["p0", "p1", "p2", "p3", "tokens"],
+            output_names=["out"],
+            header=header,
+            source=source,
+        )
+        size = 2 * 65536 * 128  # head 1 of a 65536-token block
+        pattern = mx.arange(size, dtype=mx.uint32) % 16381
+        blocks = [(pattern | (b << 14)).astype(mx.uint16).view(mx.bfloat16) for b in range(4)]
+        tokens = [0, 65535, 65536, 131071, 131072, 196607, 196608, 262143]
+        (out,) = kernel(
+            inputs=[*blocks, mx.array(tokens, mx.uint32)],
+            output_shapes=[(len(tokens) * 128 * 2,)],
+            output_dtypes=[mx.uint16],
+            grid=(len(tokens) * 128, 1, 1),
+            threadgroup=(128, 1, 1),
+        )
+        out = out.tolist()
+        for n, token in enumerate(tokens):
+            for lane in range(32):
+                for j in range(4):
+                    t = n * 128 + lane * 4 + j
+                    local = 65536 * 128 + lane * 4 + token % 65536 * 128 + j
+                    expected = (token >> 16) << 14 | local % 16381
+                    self.assertEqual(out[2 * t : 2 * t + 2], [expected, expected], (token, lane, j))
+
 
 if __name__ == "__main__":
     unittest.main()
