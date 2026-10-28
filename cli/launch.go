@@ -29,11 +29,11 @@ func launch(p Paths, args []string) error {
 		printUsage(os.Stdout, "launch")
 		fmt.Println("\nArguments after -- go to the harness. Reuses a running server, which keeps")
 		fmt.Println("running after the harness exits; run rec stop to stop it. Pi requires Node.js")
-		fmt.Println("and npm. The first launch installs the pinned harness.")
+		fmt.Println("and npm; omp also requires Bun. The first launch installs the pinned harness.")
 		return nil
 	}
-	if args[0] != "opencode" && args[0] != "pi" {
-		return fmt.Errorf("unsupported harness %q; use rec launch pi or rec launch opencode", args[0])
+	if args[0] != "opencode" && args[0] != "pi" && args[0] != "omp" {
+		return fmt.Errorf("unsupported harness %q; use rec launch pi, rec launch omp, or rec launch opencode", args[0])
 	}
 	rest := args[1:]
 	if len(rest) > 0 && rest[0] == "--" {
@@ -59,7 +59,7 @@ func launch(p Paths, args []string) error {
 	if err != nil {
 		return err
 	}
-	openingClient(map[string]string{"pi": "Pi", "opencode": "OpenCode"}[args[0]], s)
+	openingClient(map[string]string{"pi": "Pi", "omp": "omp", "opencode": "OpenCode"}[args[0]], s)
 	return syscall.Exec(h.argv[0], h.argv, h.environ(os.Environ()))
 }
 
@@ -86,6 +86,16 @@ func harnessCommand(p Paths, name string, s Status, env []string, key string, re
 	user, err := clientUserDir(p, name)
 	if err != nil {
 		return harness{}, err
+	}
+	if name == "omp" {
+		config, err := ompConfig(p, s, user)
+		if err != nil {
+			return harness{}, err
+		}
+		h := ompUser(user)
+		h.argv = append([]string{ompExecutable(p), "--config", config, "--model", "rec/flint"}, rest...)
+		h.set = append(h.set, [2]string{"REC_API_KEY", key})
+		return h, nil
 	}
 	if name == "pi" {
 		extension, config, err := piConfig(p, s)
@@ -388,6 +398,9 @@ func clientUserDir(p Paths, name string) (string, error) {
 func installClient(p Paths, name string) (string, error) {
 	if name == "pi" {
 		return installPi(p, os.Stderr)
+	}
+	if name == "omp" {
+		return installOmp(p, os.Stderr)
 	}
 	pin, err := loadOpenCodePin()
 	if err != nil {
