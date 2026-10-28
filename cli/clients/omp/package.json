@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@oh-my-pi/pi-coding-agent": "18.12.6"
+  }
+}

@@ -12,8 +12,8 @@ import threading
 import time
 
 binary = str(pathlib.Path(sys.argv[1]).resolve())
-clients = sys.argv[2:] or ["opencode", "pi"]
-assert all(client in ("opencode", "pi") for client in clients)
+clients = sys.argv[2:] or ["opencode", "pi", "omp"]
+assert all(client in ("opencode", "pi", "omp") for client in clients)
 
 
 class Quiet(http.server.BaseHTTPRequestHandler):
@@ -176,10 +176,12 @@ for client, context, want in profiles:
         (extensions / "legacy.mjs").write_text(
             "export default function(pi) { pi.on('before_provider_request', (e) => ({...e.payload, temperature:0.1, top_p:0.95, top_k:20, max_tokens:128})); }\n"
         )
-        client_args = (
-            ["run", "--format", "json", "Answer with 42."]
-            if client == "opencode"
-            else [
+        if client == "opencode":
+            client_args = ["run", "--format", "json", "Answer with 42."]
+        elif client == "omp":
+            client_args = ["--no-skills", "--mode", "json", "-p", "Answer with 42."]
+        else:
+            client_args = [
                 "--no-skills",
                 "--no-context-files",
                 "--no-prompt-templates",
@@ -190,7 +192,6 @@ for client, context, want in profiles:
                 "-p",
                 "Answer with 42.",
             ]
-        )
         try:
             r = subprocess.run(
                 [binary, "launch", client, "--", *client_args],
@@ -226,8 +227,9 @@ for client, context, want in profiles:
             )
             assert r.returncode == 0, (r.returncode, r.stderr[-2000:], r.stdout[-2000:])
             assert len(requests) == 2, "rec launch --args must reproduce the launched turn"
-            assert auth.read_bytes() == original_auth, "Pi auth.json was modified"
-            assert models.read_bytes() == original_models, "Pi models.json was modified"
+            if client == "pi":
+                assert auth.read_bytes() == original_auth, "Pi auth.json was modified"
+                assert models.read_bytes() == original_models, "Pi models.json was modified"
             assert (root / "data/rec/clients" / client / "user").is_dir(), "No rec user directory"
             assert not (root / "data/opencode").exists(), "OpenCode used the system data directory"
             for path, auth, body in requests:
@@ -237,7 +239,12 @@ for client, context, want in profiles:
                 actual = tuple(body.get(k) for k in ("temperature", "top_p", "top_k")) + (
                     body.get("max_tokens", body.get("max_completion_tokens")),
                 )
-                assert actual == want, (actual, want)
+                if client == "omp":
+                    # omp reserves headroom for its system prompt and tools.
+                    assert actual[:3] == want[:3], (actual, want)
+                    assert 0 < actual[3] <= want[3], (actual, want)
+                else:
+                    assert actual == want, (actual, want)
             print(
                 json.dumps(
                     {

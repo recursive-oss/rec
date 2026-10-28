@@ -205,7 +205,8 @@ if(!active) {{
         if logprobs is not None:
             logprobs.extend(out[7 if presence_penalty else 6][:produced].tolist())
         # Restore the exact scalar sampler's key when EOS truncates the packet.
-        mx.random.state[0] = out[5][produced - 1]
+        hi, lo = out[5][produced - 1].tolist()
+        mx.random.seed((int(hi) << 32) | int(lo))
         if presence_penalty:
             state["presence_mask"] = out[6]
         state["position"] += produced

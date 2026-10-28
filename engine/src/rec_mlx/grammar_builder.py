@@ -14,6 +14,8 @@ from xgrammar.structural_tag import (
     TokenFormat,
 )
 
+from .token_ids import dedicated_token_id
+
 _PROTOCOL_MARKERS = (
     "<think>",
     "</think>",
@@ -41,7 +43,8 @@ def build_flint_glm_grammar(
     enforce_tool_schemas: bool = False,
 ) -> StructuralTag:
     ids = {
-        marker: _token_id(tokenizer, marker) for marker in (*_STOP_MARKERS, "<think>", "</think>")
+        marker: dedicated_token_id(tokenizer, marker)
+        for marker in (*_STOP_MARKERS, "<think>", "</think>")
     }
     if tokenizer.eos_token_id != ids["<|end_of_text|>"]:
         raise ValueError("Flint grammar requires end-of-text as the tokenizer EOS")
@@ -80,14 +83,3 @@ def build_flint_glm_grammar(
             ]
         )
     )
-
-
-def _token_id(tokenizer: PreTrainedTokenizerBase, marker: str) -> int:
-    token_id = tokenizer.convert_tokens_to_ids(marker)
-    if (
-        not isinstance(token_id, int)
-        or tokenizer.convert_ids_to_tokens(token_id) != marker
-        or tokenizer.encode(marker, add_special_tokens=False) != [token_id]
-    ):
-        raise ValueError(f"Flint grammar requires {marker!r} to be a dedicated vocabulary token")
-    return token_id

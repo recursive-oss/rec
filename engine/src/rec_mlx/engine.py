@@ -11,8 +11,10 @@ from pathlib import Path
 
 from .chat import load_tokenizer, normalize_messages
 from .checkpoint import validate
+from .constants import FORCED_TOKEN_LOGPROB
 from .detokenize import StreamingText
 from .kernels.device import profile_for_device
+from .thinking import ThinkBudget, resolve_think_ids
 
 
 class ContextLimitError(ValueError):
@@ -77,6 +79,11 @@ class Engine:
         self._prefix_preparation = None
         self.mx = mx
         self.tokenizer = load_tokenizer(directory)
+        try:
+            self.think_ids = resolve_think_ids(self.tokenizer)
+        except ValueError:
+            # Without <think>/</think> the engine serves requests that carry no thinking budget.
+            self.think_ids = None
         self._constraints = None
         self.enforce_tool_schemas = enforce_tool_schemas
         self._constraints_lock = threading.Lock()
@@ -109,6 +116,13 @@ class Engine:
             "weight_format": self.identity["weight_format"],
             "kv_format": self.identity["kv_format"],
         }
+
+    def validate_thinking_budget(self, ids, budget):
+        if self.think_ids is None:
+            raise ValueError("thinking_budget requires <think> and </think> tokenizer tokens")
+        opens = [i for i, t in enumerate(ids) if t == self.think_ids[0]]
+        if opens and self.think_ids[1] not in ids[opens[-1] + 1 :]:
+            raise ValueError("thinking_budget requires a prompt without an unclosed <think>")
 
     @property
     def constraints(self):
@@ -149,6 +163,7 @@ class Engine:
         should_stop=lambda: False,
         grammar=None,
         return_logprobs=False,
+        thinking_budget=None,
     ):
         # Metal streams are thread-local; HTTP handlers run outside the model-loading thread.
         with self.mx.stream(self.mx.new_stream(self.mx.gpu)):
@@ -162,6 +177,7 @@ class Engine:
                         should_stop=should_stop,
                         grammar=constraint,
                         return_logprobs=return_logprobs,
+                        thinking_budget=thinking_budget,
                     )
             except PrefillCancelled:
                 self.mx.synchronize()
@@ -221,7 +237,21 @@ class Engine:
                 prefix = prepared
         return prefix
 
-    def _generate_tokens(self, ids, sampling, *, should_stop, grammar=None, return_logprobs=False):
+    def _generate_tokens(
+        self,
+        ids,
+        sampling,
+        *,
+        should_stop,
+        grammar=None,
+        return_logprobs=False,
+        thinking_budget=None,
+    ):
+        if thinking_budget is not None and grammar is None:
+            raise ValueError("thinking_budget requires the flint grammar")
+        if thinking_budget is not None:
+            # The server validates before any response header; this is the backstop.
+            self.validate_thinking_budget(ids, thinking_budget)
         if len(ids) + sampling.max_tokens > self.context_limit:
             raise ContextLimitError(
                 "Prompt plus output allowance exceeds the configured context limit"
@@ -273,6 +303,8 @@ class Engine:
                     top_p=sampling.top_p,
                     top_k=sampling.top_k,
                 )
+
+            think = ThinkBudget(thinking_budget, *(self.think_ids or (None, None)))
             prefill_end = time.perf_counter()
             prefill_peak = mx.get_peak_memory()
             first = None
@@ -282,9 +314,32 @@ class Engine:
                 if should_stop():
                     reason = "stop"
                     break
-                if index:
+                forced = think.forced_token() if index else None
+                if forced is not None:
+                    # The budget caps every packet, so a forced close always starts a new one.
+                    # The last reasoning token is returned but unfed; feed it before </think>.
+                    # feed_only runs one forward pass: no sampling, grammar, presence or RNG
+                    # change, and the packet seed schedule (seed + index) is untouched.
+                    self.resident_sampler.block(
+                        session._state,
+                        generated[-1],
+                        1,
+                        sampling.seed + index,
+                        feed_only=True,
+                        presence_penalty=sampling.presence_penalty,
+                    )
+                    token = forced
+                    grammar.accept_first(token, session._state)
+                    if sampling.presence_penalty:
+                        session._state["presence_mask"][token] = 1.0
+                    if return_logprobs:
+                        token_logprobs.append(FORCED_TOKEN_LOGPROB)
+                    computed_tokens += 1
+                elif index:
                     if not packet:
                         count = min(8, sampling.max_tokens - index)
+                        if think.remaining() is not None:
+                            count = min(count, think.remaining())
                         options = {"logprobs": token_logprobs} if return_logprobs else {}
                         packet = self.resident_sampler.block(
                             session._state,
@@ -306,6 +361,7 @@ class Engine:
                     flat = logits.reshape(-1).astype(mx.float32)
                     if grammar is not None:
                         flat = grammar.first_logits(flat)
+                    flat = think.mask_first_logits(flat)
                     if sampling.temperature == 0:
                         token = int(mx.argmax(flat).item())
                     elif unfiltered_t1:
@@ -326,6 +382,7 @@ class Engine:
                 if first is None:
                     first = time.perf_counter()
                 generated.append(token)
+                think.accept(token)
                 details = {"logprob": token_logprobs[index]} if return_logprobs else {}
                 if token in stops:
                     reason = "stop"
@@ -386,6 +443,7 @@ class Engine:
                     "process_peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
                     "computed_tokens": computed_tokens,
                     "decode_strategy": "resident_sampling",
+                    **think.report(),
                     **(grammar.metrics() if grammar is not None else {}),
                 },
             }

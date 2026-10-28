@@ -3,10 +3,10 @@
 # The OpenCode client is built for Apple Silicon only.
 ifeq ($(shell uname -sm),Darwin arm64)
 test: test-cli test-engine
-CLIENTS = opencode pi
+CLIENTS = opencode pi omp
 else
 test: test-cli
-CLIENTS = pi
+CLIENTS = pi omp
 endif
 
 test-cli:
@@ -24,7 +24,7 @@ PYTHON_ROOT = $(shell uv python dir)/cpython-3.12.12-macos-aarch64-none
 
 test-engine:
 	cd engine && uv venv --allow-existing --python 3.12 && uv pip install '.[validation]'
-	cd engine && .venv/bin/pytest -v -rs
+	cd engine && nice -n 10 .venv/bin/pytest -v -rs -n auto --dist loadgroup
 	uv python install 3.12.12
 	rm -rf .build/bundle-mlx .build/smoke
 	$(PYTHON_ROOT)/bin/python3.12 packaging/build-mlx-runtime.py --python-root $(PYTHON_ROOT) --output .build/bundle-mlx
