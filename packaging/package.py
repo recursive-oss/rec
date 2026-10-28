@@ -15,9 +15,9 @@ import tempfile
 from pathlib import Path
 
 TRUSTED_NATIVE_RUNTIME = {
-    "binary": "9217b560f9b71b65ce0587eb9d57aca41000b2afa527dc94dc984ee6d28c84d7",
-    "commit": "13965eff710a5de3b031b68b77604b232616502a",
-    "tree": "de744eb50a9f5c0e15faaccdedadb471ca420897",
+    "binary": "8fe875a4ccb9715c2d293dd3e0f6e389d0878a416de6679fa3daf7241c4c9b18",
+    "commit": "f09b8f04df3e1a44a2d03c3c7f5119dcc6793415",
+    "tree": "d7e75527a7c11cc71c14f68b2ebd72277e4fe592",
 }
 
 
