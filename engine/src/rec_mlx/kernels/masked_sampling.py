@@ -161,6 +161,8 @@ if(!active) {{
         seed=0,
         grammar=None,
         logprobs=None,
+        probe_rows=None,
+        probe=None,
     ):
         keys = None
         if (presence_penalty or grammar is not None or logprobs is not None) and (temperature, top_p, top_k) == (
@@ -204,6 +206,8 @@ if(!active) {{
         assert 1 <= produced <= count
         if logprobs is not None:
             logprobs.extend(out[7 if presence_penalty else 6][:produced].tolist())
+        if probe_rows is not None:
+            probe_rows.extend((out[4][:produced].astype(mx.float32) @ probe).tolist())
         # Restore the exact scalar sampler's key when EOS truncates the packet.
         mx.random.state[0] = out[5][produced - 1]
         if presence_penalty:

@@ -53,6 +53,10 @@ class Engine:
         *,
         context_limit: int,
         enforce_tool_schemas: bool = False,
+        steering_file: Path | None = None,
+        steering_strength: float = 1.0,
+        probe_file: Path | None = None,
+        probe_layer: int | None = None,
     ):
         if platform.system() != "Darwin" or platform.machine() != "arm64":
             raise RuntimeError("Flint requires an Apple Silicon Mac")
@@ -87,7 +91,29 @@ class Engine:
         mx.set_cache_limit(0)
         mx.clear_cache()
         mx.reset_peak_memory()
-        self.runtime, self.resident_sampler = build_decoder(QATModel(directory), optimized=True)
+        steering = None
+        if steering_file is not None:
+            from .steering import load
+
+            steering = load(
+                steering_file,
+                hidden_size=config["hidden_size"],
+                layers=config["num_hidden_layers"],
+                strength=steering_strength,
+            )
+        self.runtime, self.resident_sampler = build_decoder(
+            QATModel(directory), optimized=True, steering=steering
+        )
+        probe = None
+        if probe_file is not None:
+            from .steering import load
+
+            layers = config["num_hidden_layers"]
+            if probe_layer is not None and not 0 <= probe_layer <= layers:
+                raise ValueError(f"The probe layer must be between 0 and {layers}")
+            probe = load(probe_file, hidden_size=config["hidden_size"], layers=layers)
+            self.resident_sampler.probe = probe.direction
+        self.probe_layer = probe_layer
         # Packing replaces native weights with lazy views. Materialize them on their creation
         # stream before HTTP threads use the native prefill model.
         mx.eval(self.runtime.model.native.parameters())
@@ -108,6 +134,10 @@ class Engine:
             "device_profile": profile.chip,
             "weight_format": self.identity["weight_format"],
             "kv_format": self.identity["kv_format"],
+            "steering": None
+            if steering is None
+            else dict(steering.summary(), strength=steering_strength),
+            "probe": None if probe is None else {"sha256": probe.sha256, "layer": probe_layer},
         }
 
     @property
@@ -202,6 +232,17 @@ class Engine:
             mx.synchronize()
         return {"prepared_tokens": prepared, "preparation_seconds": time.perf_counter() - start}
 
+    def _probe_summary(self, rows):
+        layers = range(len(rows[0])) if rows else range(0)
+        summary = {
+            "tokens": len(rows),
+            "layer_mean": [round(sum(row[i] for row in rows) / len(rows), 4) for i in layers],
+            "layer_max": [round(max(row[i] for row in rows), 4) for i in layers],
+        }
+        if self.probe_layer is not None:
+            summary["per_token"] = [round(row[self.probe_layer], 4) for row in rows]
+        return summary
+
     def _schedule_prefix(self, ids, generated):
         from .prefix import PrefixPreparation
 
@@ -262,6 +303,7 @@ class Engine:
             del prefix, preparation
             self._prompt_cache = session.prompt_cache
             text_stream = StreamingText(self.tokenizer)
+            probe_rows = [] if self.resident_sampler.probe is not None else None
             if sampling.presence_penalty:
                 session._state["presence_mask"] = mx.zeros(logits.size, mx.float32)
             mx.eval(logits)
@@ -286,6 +328,8 @@ class Engine:
                     if not packet:
                         count = min(8, sampling.max_tokens - index)
                         options = {"logprobs": token_logprobs} if return_logprobs else {}
+                        if probe_rows is not None:
+                            options["probe_rows"] = probe_rows
                         packet = self.resident_sampler.block(
                             session._state,
                             generated[-1],
@@ -327,6 +371,10 @@ class Engine:
                     first = time.perf_counter()
                 generated.append(token)
                 details = {"logprob": token_logprobs[index]} if return_logprobs else {}
+                if probe_rows is not None:
+                    # A decode step's trace is the residual that produced its token; the first
+                    # token comes from prefill, which keeps no trace.
+                    details["probe"] = probe_rows[index - 1] if index else None
                 if token in stops:
                     reason = "stop"
                     delta = text_stream.finish(generated[:-1])
@@ -387,6 +435,9 @@ class Engine:
                     "computed_tokens": computed_tokens,
                     "decode_strategy": "resident_sampling",
                     **(grammar.metrics() if grammar is not None else {}),
+                    **(
+                        {"probe": self._probe_summary(probe_rows)} if probe_rows is not None else {}
+                    ),
                 },
             }
         finally:

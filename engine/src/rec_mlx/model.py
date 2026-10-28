@@ -255,6 +255,9 @@ class SparseMoeBlock(nn.Module):
 
 
 class DecoderLayer(nn.Module):
+    steering = None
+    attention_slot = mlp_slot = 0
+
     def __init__(self, args: ModelArgs, layer: int):
         super().__init__()
         self.self_attn = Attention(args, layer)
@@ -268,10 +271,17 @@ class DecoderLayer(nn.Module):
 
     def __call__(self, x, mask=None, cache=None):
         h = x + self.self_attn(self.input_layernorm(x), mask, cache)
-        return h + self.mlp(self.post_attention_layernorm(h))
+        if self.steering is not None:
+            h = self.steering(h, self.attention_slot)
+        h = h + self.mlp(self.post_attention_layernorm(h))
+        if self.steering is not None:
+            h = self.steering(h, self.mlp_slot)
+        return h
 
 
 class FlintTransformer(nn.Module):
+    steering = None
+
     def __init__(self, args: ModelArgs):
         super().__init__()
         self.args = args
@@ -294,6 +304,8 @@ class FlintTransformer(nn.Module):
         self, inputs, cache=None, input_embeddings: mx.array | None = None, *, should_stop=None
     ):
         h = input_embeddings if input_embeddings is not None else self.embed_tokens(inputs)
+        if self.steering is not None:
+            h = self.steering(h, 0)
         if cache is None:
             cache = [None] * len(self.layers)
         full_mask = (

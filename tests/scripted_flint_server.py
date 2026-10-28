@@ -43,7 +43,20 @@ class ScriptedEngine:
     startup = {"engine_experiment": "scripted", "kv_format": "none"}
     prompt = Engine.prompt
 
-    def __init__(self, model_dir, manifest, *, context_limit, enforce_tool_schemas):
+    def __init__(
+        self,
+        model_dir,
+        manifest,
+        *,
+        context_limit,
+        enforce_tool_schemas,
+        steering_file=None,
+        steering_strength=1.0,
+        probe_file=None,
+        probe_layer=None,
+    ):
+        assert steering_file is None and steering_strength == 1.0
+        assert probe_file is None and probe_layer is None
         self.context_limit = context_limit
         self.tokenizer = flint_tokenizer()
         self.constraints = ConstraintCompiler(self.tokenizer)
