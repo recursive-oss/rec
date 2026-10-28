@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-validation = ["pytest==8.4.2"]
+validation = ["pytest==8.4.2", "pytest-xdist==3.8.0"]
 
 [project.scripts]
 rec-mlx = "rec_mlx.cli:main"
@@ -26,6 +26,7 @@ packages = ["src/rec_mlx"]
 [tool.ruff]
 extend = "../ruff.toml"
 extend-exclude = ["src/rec_mlx/kernels"]
+src = ["src", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

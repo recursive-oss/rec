@@ -109,6 +109,18 @@ The response contains generated text in `choices`. For other clients, use
 base URL `http://127.0.0.1:11500/v1`, model `flint`, and the API key from
 `rec auth token`.
 
+To bound the reasoning of a chat request, add `"thinking_budget": N`, a
+nonnegative integer. It needs `grammar=flint` (the default). N counts the
+tokens after the model's own `<think>`; when N is reached, Flint closes the
+`</think>` block itself. A budget of 0 skips reasoning. A prompt that already
+ends with `<think>` is rejected with HTTP 400. A prompt with an
+unclosed `<think>` anywhere is also rejected. `/v1/messages` rejects only
+`thinking_budget` with 400; `thinking.budget_tokens` is ignored as before. When
+the request sets `thinking_budget` (0 included), the response `usage` reports
+`reasoning_tokens` and `thinking_forced_close`. Streaming responses report them
+only in the final usage chunk, so set `stream_options.include_usage`. Without a
+budget these keys do not appear.
+
 The Anthropic-compatible API is available at
 `http://127.0.0.1:11500/v1/messages`. Point `ANTHROPIC_BASE_URL` at
 `http://127.0.0.1:11500` and send the token from `rec auth token` as a bearer

@@ -50,7 +50,8 @@ brew install go node uv
 3. Add or update tests for changed behavior.
 4. Update the documentation when you change commands, flags, output, or
    requirements.
-5. Run `make test`.
+5. Run `make test`. It runs the engine tests in parallel; set
+   `PYTEST_XDIST_AUTO_NUM_WORKERS` to choose the worker count.
 
 ## Open a pull request
 
