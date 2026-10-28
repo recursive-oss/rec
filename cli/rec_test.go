@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -355,11 +356,141 @@ func TestManifestSchemaAndPaths(t *testing.T) {
 	}
 }
 
+func TestManifestAcceptsPinnedNativeHIPTarget(t *testing.T) {
+	m := Manifest{
+		Engine: "flint-native", Schema: 1, Model: "flint",
+		Revision: "3b93f9053b530488405ae9fca51d4900d6ce21f0",
+		OS:       "linux", Arch: "amd64", Backend: "hip", Context: 262144, MaxContext: 262144,
+		MinRAM: 1, Entry: "config.json",
+		Files:               []File{{Name: "config.json", Size: 1, SHA256: digest([]byte("x")), URL: "https://example.com/config.json"}},
+		RuntimeSHA:          digest([]byte("runtime")),
+		RuntimeFiles:        []File{{Name: "flint-serve", Size: 1, SHA256: digest([]byte("r")), Executable: true}},
+		RuntimeBinarySHA:    digest([]byte("r")),
+		RuntimeSourceCommit: strings.Repeat("a", 40),
+		RuntimeSourceTree:   strings.Repeat("b", 40),
+	}
+	got, err := decodeManifest(mustJSON(t, m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Engine != "flint-native" || got.Backend != "hip" {
+		t.Fatalf("native HIP target identity lost: %+v", got)
+	}
+	for name, change := range map[string]func(*Manifest){
+		"revision":    func(value *Manifest) { value.Revision = "unpinned" },
+		"max context": func(value *Manifest) { value.MaxContext = 262145 },
+		"context":     func(value *Manifest) { value.Context, value.MaxContext = 262145, 262145 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := m
+			change(&bad)
+			if _, err := decodeManifest(mustJSON(t, bad)); err == nil {
+				t.Fatal("unpinned native contract accepted")
+			}
+		})
+	}
+}
+
+func TestVerifyLocalModelUsesVerifiedFilesInPlace(t *testing.T) {
+	root := t.TempDir()
+	data := []byte("pinned checkpoint bytes")
+	entry := filepath.Join(root, "config.json")
+	if err := os.WriteFile(entry, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	m := Manifest{Model: "flint", Entry: "config.json", Files: []File{{
+		Name: "config.json", Size: int64(len(data)), SHA256: digest(data),
+	}}}
+	got, err := verifyLocalModel(root, m, io.Discard)
+	if err != nil || got != entry {
+		t.Fatalf("verified local model not returned in place: %q %v", got, err)
+	}
+	if err := os.WriteFile(entry, []byte("corrupt checkpoint bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyLocalModel(root, m, io.Discard); err == nil {
+		t.Fatal("corrupt local model accepted")
+	}
+	os.Remove(entry)
+	if err := os.Symlink(filepath.Join(root, "target"), entry); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyLocalModel(root, m, io.Discard); err == nil {
+		t.Fatal("symlinked local model file accepted")
+	}
+}
+
 func TestAppleChipAllowlist(t *testing.T) {
 	for chip, ok := range map[string]bool{"Apple M4 Pro": true, "Apple M5 Pro": true, "Apple M5 Max": true, "Apple M4 Max": true, "Apple M4": false, "Apple M1 Pro": false} {
 		if (checkAppleChip(chip) == nil) != ok {
 			t.Fatalf("%s: want supported=%t", chip, ok)
 		}
+	}
+}
+
+func TestNativeHIPRequiresLocalModelDirectory(t *testing.T) {
+	native := Manifest{Engine: "flint-native"}
+	if err := validateModelSource("serve", native, ""); err == nil {
+		t.Fatal("native serve accepted without --model-dir")
+	}
+	if err := validateModelSource("pull", native, ""); err == nil {
+		t.Fatal("native pull accepted remote checkpoint transport")
+	}
+	if err := validateModelSource("serve", native, "/models/flint"); err != nil {
+		t.Fatalf("native local model rejected: %v", err)
+	}
+	if err := validateModelSource("serve", Manifest{Engine: "mlx"}, ""); err != nil {
+		t.Fatalf("MLX download behavior changed: %v", err)
+	}
+}
+
+func TestNativeHIPLaunchDoesNotAutostartWithoutModelDirectory(t *testing.T) {
+	if err := validateLaunchAutostart(Manifest{Engine: "flint-native"}); err == nil {
+		t.Fatal("native launch accepted downloader/background autostart path")
+	}
+	if err := validateLaunchAutostart(Manifest{Engine: "mlx"}); err != nil {
+		t.Fatalf("MLX launch autostart was rejected: %v", err)
+	}
+}
+
+func TestNativeHIPPreflightOnLinuxAMD64(t *testing.T) {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("native HIP target is Linux/amd64")
+	}
+	oldProbe := nativeHIPProbe
+	nativeHIPProbe = func() error { return nil }
+	defer func() { nativeHIPProbe = oldProbe }()
+	m := Manifest{Engine: "flint-native", OS: "linux", Arch: "amd64", Backend: "hip", MinRAM: 1}
+	if err := preflight(m); err != nil {
+		t.Fatalf("native HIP host rejected: %v", err)
+	}
+}
+
+func TestNativeHIPHardwareRequiresGFX1151(t *testing.T) {
+	root := t.TempDir()
+	kfd := filepath.Join(root, "kfd")
+	if err := os.WriteFile(kfd, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	nodes := filepath.Join(root, "nodes")
+	if err := os.MkdirAll(filepath.Join(nodes, "1"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	properties := filepath.Join(nodes, "1", "properties")
+	write := func(target string) {
+		t.Helper()
+		content := "simd_count 80\nwave_front_size 32\ngfx_target_version " + target + "\n"
+		if err := os.WriteFile(properties, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("110501")
+	if err := nativeHIPHardware(kfd, filepath.Join(nodes, "*", "properties")); err != nil {
+		t.Fatalf("gfx1151 rejected: %v", err)
+	}
+	write("110500")
+	if err := nativeHIPHardware(kfd, filepath.Join(nodes, "*", "properties")); err == nil {
+		t.Fatal("non-gfx1151 device accepted")
 	}
 }
 

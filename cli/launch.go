@@ -167,6 +167,13 @@ func openingClient(name string, s Status) {
 	newScreen(os.Stderr).step(accentStyle.Render("→"), "Opening "+name, fmt.Sprintf("Flint at %s, %s tokens", s.Endpoint, formatTokens(s.Context)))
 }
 
+func validateLaunchAutostart(m Manifest) error {
+	if m.Engine == "flint-native" {
+		return fmt.Errorf("native Flint launch requires an existing local server; start it with rec serve flint --model-dir DIR")
+	}
+	return nil
+}
+
 func openCodeArgs(args []string) []string {
 	// V2's TUI selects its model from config; --model is a run-only flag.
 	// A private OpenCode server receives this process's Rec config and API key,
@@ -215,6 +222,9 @@ func launchReady(ctx context.Context, p Paths, out io.Writer) (Status, error) {
 		// detaching the server. Serving still verifies every file.
 		m, e := loadManifest("")
 		if e != nil {
+			return s, e
+		}
+		if e = validateLaunchAutostart(m); e != nil {
 			return s, e
 		}
 		if !modelFilesPresent(p, m) {

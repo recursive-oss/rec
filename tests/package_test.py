@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import hashlib
 import json
 import platform
 import re
@@ -56,4 +57,109 @@ with tempfile.TemporaryDirectory(prefix="rec-package-test-") as td:
             subprocess.check_output([str(output), "--version"], text=True).strip()
             == "rec 0.1.0-test"
         )
+    fake_flint = work / "source-flint-serve"
+    fake_flint.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = --help ]; then echo 'flint-serve --checkpoint-dir'; exit 0; fi\n"
+        "exit 1\n"
+    )
+    fake_flint.chmod(0o755)
+    rejected = subprocess.run(
+        [sys.executable, str(root / "packaging/build-flint-runtime.py"),
+         "--flint-serve", str(fake_flint), "--output", str(work / "bad-contract-runtime")],
+        capture_output=True, text=True,
+    )
+    assert rejected.returncode != 0 and "contract" in rejected.stderr, rejected.stderr
+    fake_flint.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = --help ]; then echo 'flint-serve --checkpoint-dir'; exit 0; fi\n"
+        "if [ \"$1\" = --runtime-contract ]; then echo '{\"schema\":1,\"engine\":\"flint-native\",\"os\":\"linux\",\"arch\":\"amd64\",\"backend\":\"hip\",\"revision\":\"3b93f9053b530488405ae9fca51d4900d6ce21f0\",\"max_context\":262144,\"arena_base_bytes\":25074426720,\"kv_bytes_per_token\":28672,\"sampler_bytes\":1951872,\"source_commit\":\"0123456789abcdef0123456789abcdef01234567\",\"source_tree\":\"89abcdef0123456789abcdef0123456789abcdef\",\"source_clean\":true}'; exit 0; fi\n"
+        "exit 1\n"
+    )
+    hip_runtime = work / "hip-runtime"
+    subprocess.run(
+        [sys.executable, str(root / "packaging/build-flint-runtime.py"),
+         "--flint-serve", str(fake_flint), "--output", str(hip_runtime)],
+        check=True,
+    )
+    identity = json.loads((hip_runtime / "build.json").read_text())
+    target = {key: identity[key] for key in ("engine", "os", "arch", "backend")}
+    assert target == {"engine": "flint-native", "os": "linux", "arch": "amd64", "backend": "hip"}
+    assert identity["binary_sha256"] == hashlib.sha256((hip_runtime / "flint-serve").read_bytes()).hexdigest()
+    assert identity["runtime_contract"]["source_clean"] is True
+    assert (hip_runtime / "flint-serve").stat().st_mode & 0o111
+    sentinel = hip_runtime / "keep-me"
+    sentinel.write_text("do not delete\n")
+    rejected = subprocess.run(
+        [sys.executable, str(root / "packaging/build-flint-runtime.py"),
+         "--flint-serve", str(fake_flint), "--output", str(hip_runtime)],
+        capture_output=True, text=True,
+    )
+    assert rejected.returncode != 0 and sentinel.read_text() == "do not delete\n", rejected.stderr
+    bad = work / "flint-link"
+    bad.symlink_to(fake_flint)
+    rejected = subprocess.run(
+        [sys.executable, str(root / "packaging/build-flint-runtime.py"),
+         "--flint-serve", str(bad), "--output", str(work / "bad-runtime")],
+        capture_output=True, text=True,
+    )
+    assert rejected.returncode != 0 and "symlink" in rejected.stderr, rejected.stderr
+
+    # A successful probe must be bound to the exact inode subsequently staged.
+    mutating = work / "mutating-flint-serve"
+    contract_json = json.dumps(identity["runtime_contract"], separators=(",", ":"))
+    mutating.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = --help ]; then echo 'flint-serve --checkpoint-dir'; exit 0; fi\n"
+        f"if [ \"$1\" = --runtime-contract ]; then echo '{contract_json}'; "
+        "printf '#!/bin/sh\\necho MUTATED-NO-CONTRACT\\n' > \"$0.new\"; "
+        "chmod 755 \"$0.new\"; mv \"$0.new\" \"$0\"; exit 0; fi\n"
+        "exit 1\n"
+    )
+    mutating.chmod(0o755)
+    bound_runtime = work / "identity-bound-runtime"
+    subprocess.run(
+        [sys.executable, str(root / "packaging/build-flint-runtime.py"),
+         "--flint-serve", str(mutating), "--output", str(bound_runtime)],
+        check=True,
+    )
+    staged = bound_runtime / "flint-serve"
+    staged_probe = subprocess.run(
+        [str(staged), "--runtime-contract"], capture_output=True, text=True
+    )
+    assert staged_probe.returncode == 0
+    assert json.loads(staged_probe.stdout) == identity["runtime_contract"], staged_probe.stdout
+
+    # Native packages must not trust a four-field build.json around an arbitrary executable.
+    hip_manifest = root / "packaging/flint-int4-hip.json"
+    arbitrary = work / "arbitrary-runtime"
+    arbitrary.mkdir()
+    arbitrary_server = arbitrary / "flint-serve"
+    arbitrary_contract = dict(identity["runtime_contract"])
+    arbitrary_server.write_text(
+        "#!/bin/sh\n"
+        f"if [ \"$1\" = --runtime-contract ]; then echo '{json.dumps(arbitrary_contract, separators=(',', ':'))}'; exit 0; fi\n"
+        "exit 0\n"
+    )
+    arbitrary_server.chmod(0o755)
+    arbitrary_m = json.loads(hip_manifest.read_text())
+    (arbitrary / "build.json").write_text(json.dumps({
+        **{k: arbitrary_m[k] for k in ("engine", "os", "arch", "backend")},
+        "binary_sha256": hashlib.sha256(arbitrary_server.read_bytes()).hexdigest(),
+        "runtime_contract": arbitrary_contract,
+    }))
+    forged_manifest = work / "forged-native-manifest.json"
+    arbitrary_m.update({
+        "runtime_binary_sha256": hashlib.sha256(arbitrary_server.read_bytes()).hexdigest(),
+        "runtime_source_commit": arbitrary_contract["source_commit"],
+        "runtime_source_tree": arbitrary_contract["source_tree"],
+    })
+    forged_manifest.write_text(json.dumps(arbitrary_m))
+    rejected = subprocess.run(
+        [sys.executable, str(root / "packaging/package.py"),
+         "--runtime-dir", str(arbitrary), "--manifest", str(forged_manifest),
+         "--version", "0.1.0-test", "--output", str(work / "bad-native-rec")],
+        capture_output=True, text=True,
+    )
+    assert rejected.returncode != 0 and "trusted runtime" in rejected.stderr, rejected.stderr
     print("Packaging, archive validation and runtime/manifest mismatch rejection passed")

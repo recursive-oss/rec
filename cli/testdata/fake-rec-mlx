@@ -6,14 +6,30 @@ import json
 from pathlib import Path
 
 parser = argparse.ArgumentParser()
-parser.add_argument("command", choices=("serve",))
-parser.add_argument("model")
-for flag in ("--model-dir", "--manifest", "--api-key-file"):
-    parser.add_argument(flag, type=Path, required=True)
+native = len(__import__('sys').argv) > 1 and __import__('sys').argv[1].startswith('--')
+if native:
+    for flag in ("--model", "--checkpoint-dir", "--api-key-file"):
+        parser.add_argument(flag, type=Path, required=True)
+    parser.add_argument("--context-capacity", type=int, required=True)
+    parser.add_argument("--device-budget", required=True)
+    parser.add_argument("--bind", required=True)
+    parser.add_argument("--queue-limit", required=True)
+    parser.add_argument("--served-model", required=True)
+    parser.add_argument("--enforce-tool-schemas", action="store_true")
+else:
+    parser.add_argument("command", choices=("serve",))
+    parser.add_argument("model")
+    for flag in ("--model-dir", "--manifest", "--api-key-file"):
+        parser.add_argument(flag, type=Path, required=True)
+    parser.add_argument("--context-limit", type=int, required=True)
 parser.add_argument("--port", type=int, required=True)
-parser.add_argument("--context-limit", type=int, required=True)
 args = parser.parse_args()
-assert (args.model_dir / args.manifest.name).is_file()
+if native:
+    assert args.checkpoint_dir == args.model
+    args.model = args.served_model
+    assert args.model
+else:
+    assert (args.model_dir / args.manifest.name).is_file()
 key = args.api_key_file.read_text().strip()
 
 

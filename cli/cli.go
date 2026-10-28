@@ -13,6 +13,19 @@ import (
 	"syscall"
 )
 
+func validateModelSource(command string, m Manifest, modelDir string) error {
+	if m.Engine != "flint-native" {
+		return nil
+	}
+	if command == "pull" {
+		return fmt.Errorf("native Flint checkpoints are local-only; rec pull is unavailable")
+	}
+	if command == "serve" && modelDir == "" {
+		return fmt.Errorf("native Flint requires --model-dir DIR")
+	}
+	return nil
+}
+
 func run(args []string) error {
 	background := len(args) > 0 && args[0] == "_background"
 	if background {
@@ -92,10 +105,12 @@ func run(args []string) error {
 	manifest := flags.String("manifest", "", "")
 	runtimeDir := flags.String("runtime-dir", "", "")
 	var contextTokens int
+	var modelDir string
 	port := 11500
 	if command == "serve" {
 		flags.IntVar(&contextTokens, "context", 0, "")
 		flags.IntVar(&port, "port", port, "")
+		flags.StringVar(&modelDir, "model-dir", "", "")
 	}
 	flags.SetOutput(io.Discard)
 	if e := flags.Parse(rest); e != nil {
@@ -127,6 +142,12 @@ func run(args []string) error {
 	if *runtimeDir != "" && *manifest == "" {
 		return fmt.Errorf("--runtime-dir requires --manifest")
 	}
+	if modelDir != "" && m.Engine != "flint-native" {
+		return fmt.Errorf("--model-dir is supported only by the native Flint engine")
+	}
+	if e := validateModelSource(command, m, modelDir); e != nil {
+		return e
+	}
 	if m.Development {
 		newScreen(os.Stderr).step(warningStyle.Render("!"), "Development bundle: this is not a qualified Flint release.", "")
 	}
@@ -139,7 +160,7 @@ func run(args []string) error {
 		}
 		return e
 	}
-	return serve(ctx, p, m, *runtimeDir, port, os.Stderr, background)
+	return serve(ctx, p, m, *runtimeDir, modelDir, port, os.Stderr, background)
 }
 
 func doctor(p Paths, m Manifest, manifestErr error) error {
@@ -166,10 +187,10 @@ func doctor(p Paths, m Manifest, manifestErr error) error {
 		return manifestErr
 	}
 	if err := preflight(m); err != nil {
-		ui.failed("This Mac does not meet the requirements", "")
+		ui.failed("This system does not meet the requirements", "")
 		return err
 	}
-	ui.succeeded("This Mac meets the requirements", "")
+	ui.succeeded("This system meets the requirements", "")
 	if !modelFilesPresent(p, m) {
 		ui.step(warningStyle.Render("!"), displayName(m.Model)+" is not downloaded", "run rec pull")
 		return nil

@@ -210,7 +210,7 @@ func probe(ctx context.Context, base, key, model string, phase ...func(string)) 
 	return nil
 }
 
-func serve(parent context.Context, p Paths, m Manifest, override string, port int, out io.Writer, background ...bool) error {
+func serve(parent context.Context, p Paths, m Manifest, override, modelDir string, port int, out io.Writer, background ...bool) error {
 	l, e := lock(filepath.Join(p.State, "instance.lock"))
 	if e != nil {
 		if s, err := control(p, "status"); err == nil {
@@ -262,10 +262,10 @@ func serve(parent context.Context, p Paths, m Manifest, override string, port in
 	go func() { _ = srv.Serve(listener) }()
 	ui := newScreen(out)
 	if e = preflight(m); e != nil {
-		ui.failed("This Mac is not supported", "")
+		ui.failed("This system is not supported", "")
 		return e
 	}
-	ui.succeeded("This Mac is supported", "")
+	ui.succeeded("This system is supported", "")
 	runtimeProgress := startActivity(out, "Preparing runtime", "Runtime ready")
 	runtimeDir, e := ensureRuntime(p, m, override)
 	if e != nil {
@@ -273,7 +273,18 @@ func serve(parent context.Context, p Paths, m Manifest, override string, port in
 		return e
 	}
 	runtimeProgress.succeed()
-	model, e := ensureModel(ctx, p, m, out)
+	var model string
+	if m.Engine == "flint-native" {
+		if modelDir == "" {
+			return fmt.Errorf("native Flint requires --model-dir DIR")
+		}
+		model, e = verifyLocalModel(modelDir, m, out)
+	} else {
+		if modelDir != "" {
+			return fmt.Errorf("--model-dir is supported only by the native Flint engine")
+		}
+		model, e = ensureModel(ctx, p, m, out)
+	}
 	if e != nil {
 		return e
 	}

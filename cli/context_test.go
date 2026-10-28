@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"reflect"
 	"testing"
 )
 
@@ -94,6 +95,26 @@ func TestContextReachesEngine(t *testing.T) {
 	reduced, err := withContext(m, 65536)
 	if err != nil || reduced.Context != 65536 || reduced.contextLimit() != 262144 {
 		t.Fatal("lower memory allocation lost the supported cap", err)
+	}
+}
+
+func TestNativeHIPLaunchContract(t *testing.T) {
+	m := releaseManifest(t)
+	m.Engine, m.OS, m.Arch, m.Backend = "flint-native", "linux", "amd64", "hip"
+	m.Context = 262144
+	executable, args, env := launchCommand(Paths{Config: "/config"}, m, "/runtime", "/model/config.json", 11500)
+	wantArgs := []string{
+		"--model", "/model", "--checkpoint-dir", "/model",
+		"--context-capacity", "262144", "--device-budget", "32592542688",
+		"--bind", "127.0.0.1", "--port", "11500", "--queue-limit", "8",
+		"--api-key-file", "/config/api-key", "--served-model", "flint",
+		"--enforce-tool-schemas",
+	}
+	if executable != "/runtime/flint-serve" || !reflect.DeepEqual(args, wantArgs) {
+		t.Fatalf("native launch mismatch\nexecutable: %q\nargs: %#v", executable, args)
+	}
+	if len(env) != 0 {
+		t.Fatalf("native launch must not place credentials in the environment: %#v", env)
 	}
 }
 
