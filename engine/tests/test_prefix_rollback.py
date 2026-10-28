@@ -6,7 +6,7 @@ import mlx.core as mx
 
 from rec_mlx.cache import FixedSlidingKVCache
 from rec_mlx.engine import Engine, Sampling
-from rec_mlx.prefix import PrefillCancelled, PromptCache, select_prefix
+from rec_mlx.prefix import MAX_CHECKPOINTS, PrefillCancelled, PromptCache, select_prefix
 from rec_mlx.quantized import QATSession
 
 
@@ -54,13 +54,31 @@ class PrefixRollbackTests(unittest.TestCase):
         for value in range(12):
             prefix.checkpoint()
             self.append(prefix, [value])
-            self.assertLessEqual(len(prefix.checkpoints), 2)
         self.assertGreater(prefix.checkpoint_bytes, 0)
         self.assertIs(select_prefix(prefix, list(range(13)))[0], prefix)
         restored, common = select_prefix(prefix, list(range(10)))
         self.assertEqual(common, 10)
         self.assertEqual(len(restored.tokens), 10)
         self.assertEqual(select_prefix(restored, [99])[0], None)
+
+    def test_new_prompt_sharing_only_the_head_reuses_an_early_checkpoint(self):
+        prefix = self.prefix()
+        for value in range(12):
+            prefix.checkpoint()
+            self.append(prefix, [value])
+        restored, common = select_prefix(prefix, [0, 1, 2, 99])
+        self.assertEqual(common, 3)
+        self.assertEqual(restored.tokens, [0, 1, 2])
+        self.assertEqual(restored.layers[0].offset, 3)
+
+    def test_checkpoints_are_bounded(self):
+        prefix = self.prefix()
+        for value in range(MAX_CHECKPOINTS + 4):
+            prefix.checkpoint()
+            self.append(prefix, [value])
+            self.assertLessEqual(len(prefix.checkpoints), MAX_CHECKPOINTS)
+        self.assertEqual(len(prefix.checkpoints), MAX_CHECKPOINTS)
+        self.assertEqual(prefix.checkpoints[0].position, 4)
 
     def test_cancelled_native_prefill_retains_last_completed_chunk(self):
         engine = SimpleNamespace(prefill_chunk_size=2)

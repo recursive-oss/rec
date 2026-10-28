@@ -6,6 +6,11 @@ import mlx.core as mx
 
 from .cache import FixedSlidingKVCache, copy_array
 
+# One checkpoint per prefill chunk (~31 MB each on Flint). A new prompt that shares only
+# its head with the cached one (a new session, a different first message) rolls back to
+# the last checkpoint inside the shared head instead of prefilling from zero.
+MAX_CHECKPOINTS = 64
+
 
 class PrefillCancelled(Exception):
     pass
@@ -47,7 +52,7 @@ class PromptCache:
     def checkpoint(self):
         if not self.tokens:
             return
-        self.checkpoints = self.checkpoints[-1:]
+        self.checkpoints = self.checkpoints[-(MAX_CHECKPOINTS - 1) :]
         sliding = []
         for layer in self.layers:
             if isinstance(layer, FixedSlidingKVCache):
