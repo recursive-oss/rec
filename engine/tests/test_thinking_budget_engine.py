@@ -103,7 +103,10 @@ def build(monkeypatch, stream, first=FIRST_TEXT):
     engine.sampler = engine.resident_sampler = RecordingSampler(stream)
     engine.session = stub_session(first)
     engine.runtime = SimpleNamespace(
-        make_session=lambda max_new_tokens: engine.session, prefill_chunk_size=10**9, metadata=[]
+        make_session=lambda max_new_tokens: engine.session,
+        prefill_chunk_size=10**9,
+        metadata=[],
+        device_profile=SimpleNamespace(chip="x"),
     )
     engine._prompt_cache = engine.session.prompt_cache
     engine._prefix_preparation = None
