@@ -6,8 +6,10 @@ permissions:
   contents: write
 jobs:
   release:
+    # macOS 26 or later: each runtime imports MLX to check itself, and the default build's
+    # Metal 4 library does not load on earlier macOS.
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
@@ -19,10 +21,15 @@ jobs:
           version=${GITHUB_REF_NAME#v}
           uv python install 3.12.12
           python_root="$(uv python dir)/cpython-3.12.12-macos-aarch64-none"
-          "$python_root/bin/python3.12" packaging/build-mlx-runtime.py --python-root "$python_root" --output .build/bundle-mlx
-          python3 packaging/package.py --runtime-dir .build/bundle-mlx --manifest packaging/flint-int4-mlx.json \
-            --version "$version" --output dist/rec-darwin-arm64
-          test "$(dist/rec-darwin-arm64 --version)" = "rec $version"
+          # install.sh picks the -macos15 build on macOS before 26.
+          for target in 26.0:rec-darwin-arm64 15.0:rec-darwin-arm64-macos15; do
+            macos=${target%%:*} artifact=${target#*:}
+            "$python_root/bin/python3.12" packaging/build-mlx-runtime.py --python-root "$python_root" \
+              --macos "$macos" --output ".build/bundle-mlx-$macos"
+            python3 packaging/package.py --runtime-dir ".build/bundle-mlx-$macos" --manifest packaging/flint-int4-mlx.json \
+              --version "$version" --output "dist/$artifact"
+            test "$("dist/$artifact" --version)" = "rec $version"
+          done
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -38,4 +45,5 @@ jobs:
               ;;
           esac
           gh release create "$GITHUB_REF_NAME" "${notes[@]}" --verify-tag --generate-notes \
-            --title "rec $GITHUB_REF_NAME" dist/rec-darwin-arm64 dist/rec-darwin-arm64.meta
+            --title "rec $GITHUB_REF_NAME" dist/rec-darwin-arm64 dist/rec-darwin-arm64.meta \
+            dist/rec-darwin-arm64-macos15 dist/rec-darwin-arm64-macos15.meta

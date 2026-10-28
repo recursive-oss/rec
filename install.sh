@@ -24,7 +24,11 @@ rec_install() (
     esac
   done
   [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || fail 'rec requires an Apple Silicon Mac'
-  artifact=rec-darwin-arm64
+  artifact=rec-darwin-arm64 variant=''
+  # The default build's MLX runtime uses Metal 4, which needs macOS 26.
+  macos=$(sw_vers -productVersion) || fail 'could not read the macOS version'
+  [[ "$macos" =~ ^[0-9]+ ]] || fail "unrecognized macOS version: $macos"
+  if [ "${BASH_REMATCH[0]}" -lt 26 ]; then variant=-macos15; artifact=$artifact$variant; fi
   version=${REC_VERSION:-}
   version=${version#v}
   [ -z "$version" ] || [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail 'invalid REC_VERSION'
@@ -77,7 +81,7 @@ rec_install() (
   begin 'Checking this Mac'
   doctor=$("$tmp/$artifact" doctor 2>&1) || { printf '%s' "$erase"; printf '%s\n' "$doctor" >&2; fail 'this Mac does not meet the requirements above'; }
   done_step 'This Mac meets the requirements'
-  release="$data/releases/$version"
+  release="$data/releases/$version$variant"
   if [ -e "$release" ]; then
     [ -f "$release/.managed" ] && [ -f "$release/rec" ] || fail 'release directory is not managed'
     installed_hash=$(shasum -a 256 "$release/rec"); installed_hash=${installed_hash%% *}

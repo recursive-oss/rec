@@ -6,6 +6,8 @@ not a system Python or a virtualenv."""
 
 import argparse
 import json
+import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -26,9 +28,24 @@ def main():
     )
     parser.add_argument("--output", type=Path, required=True, help="new directory for the runtime")
     parser.add_argument("--uv", default="uv", help="uv executable (default: %(default)s)")
+    parser.add_argument(
+        "--macos",
+        metavar="VERSION",
+        help="oldest macOS the runtime supports, such as 15.0 (default: this Mac's version)",
+    )
     args = parser.parse_args()
     if args.output.exists():
         parser.error("output must be a new directory")
+    if args.macos and not re.fullmatch(r"\d+\.\d+", args.macos):
+        parser.error("--macos must look like 15.0")
+    # MLX publishes a wheel per macOS release; the macOS 26 metallib uses Metal 4 and fails to
+    # load on macOS 15. The deployment target selects those wheels and sets the native
+    # extension's minimum OS.
+    env = dict(os.environ)
+    platform = []
+    if args.macos:
+        env["MACOSX_DEPLOYMENT_TARGET"] = args.macos
+        platform = ["--python-platform", "aarch64-apple-darwin"]
     source_python = args.python_root / "bin/python3.12"
     information = json.loads(
         subprocess.check_output(
@@ -57,6 +74,7 @@ def main():
                 str(wheels),
                 str(ENGINE),
             ],
+            env=env,
             check=True,
         )
         (wheel,) = wheels.glob("rec_mlx-*.whl")
@@ -78,10 +96,12 @@ def main():
                 "--python",
                 str(python),
                 "--break-system-packages",
+                *platform,
                 "--only-binary",
                 ":all:",
                 str(wheel),
             ],
+            env=env,
             check=True,
         )
         launcher = stage / "rec-mlx"
@@ -96,6 +116,7 @@ def main():
                     "os": "darwin",
                     "arch": "arm64",
                     "backend": "metal",
+                    **({"macos": args.macos} if args.macos else {}),
                 },
                 indent=2,
             )

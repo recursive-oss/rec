@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "install.sh"
 ARTIFACT = "rec-darwin-arm64"
+ARTIFACTS = [ARTIFACT, ARTIFACT + "-macos15"]
 
 
 def fake_rec(version):
@@ -30,15 +31,17 @@ def fake_rec(version):
 
 def publish(directory, version, reported=None, bad_hash=False):
     directory.mkdir(parents=True, exist_ok=True)
-    body = fake_rec(reported or version).encode()
-    (directory / ARTIFACT).write_bytes(body)
-    digest = "0" * 64 if bad_hash else hashlib.sha256(body).hexdigest()
-    (directory / (ARTIFACT + ".meta")).write_text(f"{digest} {len(body)}\n")
+    for artifact in ARTIFACTS:
+        body = fake_rec(reported or version).encode() + f"# {artifact}\n".encode()
+        (directory / artifact).write_bytes(body)
+        digest = "0" * 64 if bad_hash else hashlib.sha256(body).hexdigest()
+        (directory / (artifact + ".meta")).write_text(f"{digest} {len(body)}\n")
 
 
 FIXTURES = {
     "uname": '#!/bin/sh\ncase "$1" in -s) echo "${TEST_OS:-Darwin}";; -m) echo "${TEST_ARCH:-arm64}";; esac\n',
     "curl": "#!/bin/sh\nexit 22\n",
+    "sw_vers": '#!/bin/sh\n[ "$1" = -productVersion ] && echo "${TEST_MACOS:-26.1}"\n',
 }
 
 
@@ -58,7 +61,10 @@ def main():
         publish(releases / "download/v0.6.0", "0.6.0", bad_hash=True)
         bins = root / "bin"
         offline = root / "offline"
-        for directory, names in [(bins, ["uname"]), (offline, ["uname", "curl"])]:
+        for directory, names in [
+            (bins, ["uname", "sw_vers"]),
+            (offline, ["uname", "sw_vers", "curl"]),
+        ]:
             directory.mkdir()
             for name in names:
                 (directory / name).write_text(FIXTURES[name])
@@ -134,6 +140,17 @@ def main():
         assert not (home / "running").exists()
         assert installed(home).parent.name == "0.3.0"
 
+        home, env = new_home({"TEST_MACOS": "15.8.1"})
+        install(env)
+        sequoia = installed(home)
+        assert sequoia == (home / ".local/share/rec/releases/0.3.0-macos15/rec").resolve(), sequoia
+        assert sequoia.read_text().endswith("# rec-darwin-arm64-macos15\n")
+        # After upgrading to macOS 26, the same version installs the default build beside it.
+        install(dict(env, TEST_MACOS="26.0"))
+        assert installed(home).parent.name == "0.3.0"
+        assert installed(home).read_text().endswith("# rec-darwin-arm64\n")
+        assert "unrecognized macOS" in install(dict(env, TEST_MACOS="beta"), ok=False).stderr
+
         home, env = new_home()
         install(env, "--serve")
         assert (home / "serve.log").read_text() == "serve\n"
@@ -157,7 +174,7 @@ def main():
         server.shutdown()
         server.server_close()
         print(
-            "Installer: public default URL, pins, idempotence, checksum/version/device rejection, running-server stop, --serve, platform checks and collision preservation passed"
+            "Installer: public default URL, pins, idempotence, checksum/version/device rejection, running-server stop, --serve, platform checks, macOS 15 build selection and collision preservation passed"
         )
 
 
