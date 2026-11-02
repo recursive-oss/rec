@@ -26,7 +26,7 @@ excluded.</sub></p>
 
 ## Requirements
 
-- Apple Silicon Mac with an M4 Pro, M5 Pro, or M5 Max
+- Apple Silicon Mac with an M4 Pro, M4 Max, M5 Pro, or M5 Max
 - At least 48 GB unified memory
 - About 30 GB free disk space
 - [Node.js 22](https://nodejs.org/en/download) and npm for pi

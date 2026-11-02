@@ -28,7 +28,11 @@ def build_decoder(model, *, optimized):
         from rec_mlx.kernels.mixed_bits import install as install_qat
 
         install_qat(megakernel, model, profile.mlp_workers, profile.specialize_mixed_experts)
-    engine = megakernel.FullModel(
+    engine_type = megakernel.FullModel
+    if profile.chip == "M4 Max":
+        from rec_mlx.m4_max import FullModel as engine_type
+
+    engine = engine_type(
         model,
         workers=profile.workers,
         mlp_workers=profile.mlp_workers,
@@ -39,6 +43,11 @@ def build_decoder(model, *, optimized):
     if not optimized:
         return engine, None
 
+    if profile.chip == "M4 Max":
+        from rec_mlx.m4_max_prefill import optimize_prefill
+
+        optimize_prefill(model)
+
     from rec_mlx.kernels.activation_optimization import guard
     from rec_mlx.kernels.activation_optimization import transform as fast_activation
     from rec_mlx.kernels.kv_teams import guard as guard_schedule
@@ -48,5 +57,9 @@ def build_decoder(model, *, optimized):
     spec = captures["decode"]
     guard(megakernel, engine, spec)
     spec = dict(spec, header=fast_activation(spec["header"]))
+    if profile.chip == "M4 Max":
+        from rec_mlx.kernels.m4_max import transform as m4_max
+
+        spec = dict(spec, header=m4_max(spec["header"]))
     engine.kernel = megakernel._metal(name="flint_decode_fast_activation", **spec)
     return engine, ResidentSampler(megakernel, engine, spec)

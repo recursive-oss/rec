@@ -286,6 +286,15 @@ class ServingTest(unittest.TestCase):
             conn.close()
         self.assertEqual(self.request("C")[0], 503)
 
+    def test_listen_backlog_holds_a_burst_of_connections(self):
+        # Connections beyond the backlog are reset (macOS) or dropped (Linux) before a handler runs.
+        self.server.shutdown()
+        clients = [
+            socket.create_connection(self.server.server_address, timeout=5) for _ in range(16)
+        ]
+        for client in clients:
+            client.close()
+
     def test_queue_capacity_rejects_excess_and_preserves_admitted_requests(self):
         first = self.pool.submit(self.request, "A", max_tokens=1)
         self.assertTrue(self.engine.started.wait(3))

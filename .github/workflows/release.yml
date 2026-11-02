@@ -27,7 +27,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          prerelease=()
-          case "$GITHUB_REF_NAME" in *-*) prerelease=(--prerelease);; esac
-          gh release create "$GITHUB_REF_NAME" "${prerelease[@]}" --verify-tag --generate-notes \
+          notes=()
+          case "$GITHUB_REF_NAME" in
+            *-*) notes=(--prerelease) ;;
+            *)
+              awk -v heading="## $GITHUB_REF_NAME" '$0 == heading {found = 1; next} /^## / {found = 0} found' \
+                CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+              grep -q . "$RUNNER_TEMP/notes.md"
+              notes=(--notes-file "$RUNNER_TEMP/notes.md")
+              ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" "${notes[@]}" --verify-tag --generate-notes \
             --title "rec $GITHUB_REF_NAME" dist/rec-darwin-arm64 dist/rec-darwin-arm64.meta

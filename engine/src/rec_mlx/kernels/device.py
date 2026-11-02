@@ -15,6 +15,7 @@ class DeviceProfile:
 def profile_for_device(info):
     chips = {
         ("applegpu_g16s", "Apple M4 Pro"): "M4 Pro",
+        ("applegpu_g16s", "Apple M4 Max"): "M4 Max",
         ("applegpu_g17s", "Apple M5 Pro"): "M5 Pro",
         ("applegpu_g17s", "Apple M5 Max"): "M5 Max",
     }
@@ -36,5 +37,5 @@ def profile_for_device(info):
         architecture=architecture,
         prefill_chunk_size=4096 if chips[identity] == "M5 Pro" else 2048,
         # The specialized M4 resident shader fails scalar/packet parity.
-        specialize_mixed_experts=chips[identity] != "M4 Pro",
+        specialize_mixed_experts=chips[identity] not in ("M4 Pro", "M4 Max"),
     )

@@ -265,6 +265,14 @@ class Engine:
             if sampling.presence_penalty:
                 session._state["presence_mask"] = mx.zeros(logits.size, mx.float32)
             mx.eval(logits)
+            if self.runtime.device_profile.chip == "M4 Max":
+                from .kernels.filtered_sampling import make_sampler
+
+                sampler = make_sampler(
+                    temp=sampling.temperature,
+                    top_p=sampling.top_p,
+                    top_k=sampling.top_k,
+                )
             prefill_end = time.perf_counter()
             prefill_peak = mx.get_peak_memory()
             first = None
