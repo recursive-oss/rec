@@ -3,10 +3,10 @@
 # The OpenCode client is built for Apple Silicon only.
 ifeq ($(shell uname -sm),Darwin arm64)
 test: test-cli test-engine
-CLIENTS = opencode pi
+CLIENTS = opencode pi omp
 else
 test: test-cli
-CLIENTS = pi
+CLIENTS = pi omp
 endif
 
 test-cli:

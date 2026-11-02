@@ -15,8 +15,8 @@ func execClient(p Paths, args []string) error {
 		fmt.Println("the server or the Flint provider. Arguments go to the harness unchanged.")
 		return nil
 	}
-	if args[0] != "opencode" && args[0] != "pi" {
-		return fmt.Errorf("unsupported harness %q; use rec exec pi or rec exec opencode", args[0])
+	if args[0] != "opencode" && args[0] != "pi" && args[0] != "omp" {
+		return fmt.Errorf("unsupported harness %q; use rec exec pi, rec exec omp, or rec exec opencode", args[0])
 	}
 	rest := args[1:]
 	if args[0] == "opencode" && len(rest) > 0 && (rest[0] == "upgrade" || rest[0] == "uninstall") {
@@ -31,6 +31,9 @@ func execClient(p Paths, args []string) error {
 		return err
 	}
 	h := piUser(user)
+	if args[0] == "omp" {
+		h = ompUser(user)
+	}
 	if args[0] == "opencode" {
 		h = openCodeUser(user)
 	}

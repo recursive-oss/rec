@@ -14,6 +14,12 @@ var openCodeLogo embed.FS
 //go:embed clients/pi/package.json
 var piPackage []byte
 
+//go:embed clients/omp/package.json
+var ompPackage []byte
+
+//go:embed clients/omp/package-lock.json
+var ompLock []byte
+
 //go:embed clients/pi/package-lock.json
 var piLock []byte
 
