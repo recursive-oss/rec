@@ -58,12 +58,17 @@ func TestOmpConfig(t *testing.T) {
 }
 
 func TestOmpEnvUsesRecUserDirectory(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "omp"), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":/usr/bin:/bin")
 	p := Paths{Data: t.TempDir()}
 	h, err := harnessCommand(p, "omp", Status{Ready: true, Model: "flint", Context: 8192, Endpoint: "http://127.0.0.1:11500/v1"}, nil, "secret", []string{"-p", "hi"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := h.argv[0]; got != ompExecutable(p) {
+	if got := h.argv[0]; got != filepath.Join(bin, "omp") {
 		t.Fatalf("wrong omp executable: %s", got)
 	}
 	if !reflect.DeepEqual(h.argv[1:4], []string{"--config", ompConfigPath(p), "--model"}) {
@@ -76,6 +81,34 @@ func TestOmpEnvUsesRecUserDirectory(t *testing.T) {
 	want := []string{"PATH=/bin", "PI_CODING_AGENT_DIR=" + filepath.Join(p.Data, "clients", "omp", "user"), "REC_API_KEY=secret"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("incorrect environment merge: %q", got)
+	}
+}
+
+func TestOmpFallsBackToPinnedInstall(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()+":/usr/bin:/bin")
+	p := Paths{Data: t.TempDir()}
+	h, err := harnessCommand(p, "omp", Status{Ready: true, Model: "flint", Context: 8192, Endpoint: "http://127.0.0.1:11500/v1"}, nil, "secret", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := h.argv[0]; got != ompExecutable(p) {
+		t.Fatalf("wrong omp executable: %s", got)
+	}
+}
+
+func TestInstallOmpPrefersPath(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "omp"), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":/usr/bin:/bin")
+	p := dataPaths(t.TempDir())
+	got, err := installOmp(p, io.Discard)
+	if err != nil || got != filepath.Join(bin, "omp") {
+		t.Fatalf("installOmp = %s, %v; want PATH omp", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(p.Data, "clients")); !os.IsNotExist(err) {
+		t.Fatalf("installOmp installed the pinned client: %v", err)
 	}
 }
 

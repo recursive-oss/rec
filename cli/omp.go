@@ -21,7 +21,17 @@ func ompExecutable(p Paths) string {
 	return filepath.Join(ompInstallDir(p), "node_modules", ".bin", "omp")
 }
 
+func ompBinary(p Paths) string {
+	if path, err := exec.LookPath("omp"); err == nil {
+		return path
+	}
+	return ompExecutable(p)
+}
+
 func installOmp(p Paths, out io.Writer) (string, error) {
+	if path, err := exec.LookPath("omp"); err == nil {
+		return path, nil
+	}
 	dir := ompInstallDir(p)
 	parent := filepath.Dir(dir)
 	executable := ompExecutable(p)

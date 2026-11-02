@@ -29,7 +29,8 @@ func launch(p Paths, args []string) error {
 		printUsage(os.Stdout, "launch")
 		fmt.Println("\nArguments after -- go to the harness. Reuses a running server, which keeps")
 		fmt.Println("running after the harness exits; run rec stop to stop it. Pi requires Node.js")
-		fmt.Println("and npm; omp also requires Bun. The first launch installs the pinned harness.")
+		fmt.Println("and npm. omp uses the omp on PATH when available and otherwise installs the")
+		fmt.Println("pinned harness, which requires Bun and Node.js/npm.")
 		return nil
 	}
 	if args[0] != "opencode" && args[0] != "pi" && args[0] != "omp" {
@@ -93,7 +94,7 @@ func harnessCommand(p Paths, name string, s Status, env []string, key string, re
 			return harness{}, err
 		}
 		h := ompUser(user)
-		h.argv = append([]string{ompExecutable(p), "--config", config, "--model", "rec/flint"}, rest...)
+		h.argv = append([]string{ompBinary(p), "--config", config, "--model", "rec/flint"}, rest...)
 		h.set = append(h.set, [2]string{"REC_API_KEY", key})
 		return h, nil
 	}
