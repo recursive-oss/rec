@@ -171,6 +171,21 @@ class RoutingTests(unittest.TestCase):
             )
             self.assertTrue(mx.array_equal(trace[2048:], expected).item(), seed)
 
+    def test_m5_pro_profile_scales_with_gpu_cores(self):
+        for cores, expected_workers in ((16, 32), (18, 36), (20, 40)):
+            profile = profile_for_device(
+                {
+                    "architecture": "applegpu_g17s",
+                    "device_name": "Apple M5 Pro",
+                    "gpu_cores": cores,
+                }
+            )
+            self.assertEqual(profile.chip, "M5 Pro")
+            self.assertEqual(profile.workers, expected_workers)
+            self.assertEqual(profile.mlp_workers, 32)
+            self.assertEqual(profile.head_workers, expected_workers)
+            self.assertEqual(profile.prefill_chunk_size, 4096)
+
 
 if __name__ == "__main__":
     unittest.main()

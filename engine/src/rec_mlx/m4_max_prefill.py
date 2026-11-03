@@ -104,16 +104,18 @@ def window_attention(q, k, v, *, scale, mask, sinks):
     return mx.concatenate(outputs, axis=-2)
 
 
-def optimize_prefill(model):
+def optimize_prefill(model, *, dequantize_linear=True, fuse_switch_glu=True):
     dense_layers = set(model.config["mlp_only_layers"])
     for index, layer in enumerate(model.native.layers):
-        for name in ("q_proj", "o_proj"):
-            setattr(layer.self_attn, name, PrefillLinear(getattr(layer.self_attn, name)))
+        if dequantize_linear:
+            for name in ("q_proj", "o_proj"):
+                setattr(layer.self_attn, name, PrefillLinear(getattr(layer.self_attn, name)))
         if model.config["layer_types"][index] == "sliding_attention":
             layer.self_attn = PrefillAttention(layer.self_attn)
         dense = index in dense_layers
         mlp = layer.mlp if dense else layer.mlp.shared_expert
-        for name in ("gate_proj", "up_proj", "down_proj") if dense else ("down_proj",):
-            setattr(mlp, name, PrefillLinear(getattr(mlp, name)))
-        if not dense:
+        if dequantize_linear:
+            for name in ("gate_proj", "up_proj", "down_proj") if dense else ("down_proj",):
+                setattr(mlp, name, PrefillLinear(getattr(mlp, name)))
+        if fuse_switch_glu and not dense:
             layer.mlp.switch_mlp = PrefillSwitchGLU(layer.mlp.switch_mlp)
