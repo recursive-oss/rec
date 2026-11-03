@@ -12,6 +12,21 @@ def transform(header):
         scalar
         + "\n    vec<bfloat16_t,4> load4(uint i) const {return *((const device vec<bfloat16_t,4>*)(address(i)));}",
     )
+    old_addr = """    const device bfloat16_t* address(uint i) const {
+        uint block=global?(i/128)>>16:0;
+        uint local=global?i%(65536u*128u):i;
+        const device bfloat16_t* p=block==0?p0:block==1?p1:block==2?p2:p3;
+        return p+offset+local;
+    }"""
+    new_addr = """    const device bfloat16_t* address(uint i) const {
+        if(!global || (i < 65536u*128u)) return p0 + offset + i;
+        uint block = i >> 23;
+        uint local = i & (65536u*128u - 1u);
+        const device bfloat16_t* p = block==1 ? p1 : block==2 ? p2 : p3;
+        return p + offset + local;
+    }"""
+    assert header.count(old_addr) == 1
+    header = header.replace(old_addr, new_addr)
     original = function(header, "attention_partial_path_w53")
     replacement = original.replace(
         "float key[4],value[4];for(uint j=0;j<4;++j){key[j]=float(key_base[at+j]);value[j]=float(value_base[at+j]);}",

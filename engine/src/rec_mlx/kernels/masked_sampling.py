@@ -8,7 +8,7 @@ class FilteredResidentSampler:
     def __init__(self, module, engine, specification):
         self.module, self.engine = module, engine
         make_sampler = native_sampler
-        if engine.device_profile.chip == "M4 Max":
+        if engine.device_profile.chip in ("M4 Max", "M5 Pro"):
             from .filtered_sampling import make_sampler
         # After EOS, remaining graph nodes must not write KV or consume positions.
         inactive = f"""
