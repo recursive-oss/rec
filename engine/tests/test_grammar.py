@@ -271,6 +271,18 @@ class GrammarTests(unittest.TestCase):
             native.close(identifier)
         self.check_fixture(self.ebnf('root ::= "ok"\n'), "ok")
 
+    def test_tools_compilation_is_memoized(self):
+        tools = self.shell_tools(True)
+        first = self.compiler.tools(tools)
+        with unittest.mock.patch.object(
+            self.compiler.compiler,
+            "compile_structural_tag",
+            wraps=self.compiler.compiler.compile_structural_tag,
+        ) as compile_tag:
+            second = self.compiler.tools(deepcopy(tools))
+            compile_tag.assert_not_called()
+        self.assertIs(first, second)
+
 
 if __name__ == "__main__":
     unittest.main()

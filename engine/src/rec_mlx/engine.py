@@ -75,6 +75,10 @@ class Engine:
         self.context_limit = context_limit
         self._prompt_cache = None
         self._prefix_preparation = None
+        from .prefix import PrefixTreeCache
+
+        self._branch_cache = PrefixTreeCache()
+        self._touch_kernel = None
         self.mx = mx
         self.tokenizer = load_tokenizer(directory)
         self._constraints = None
@@ -84,6 +88,12 @@ class Engine:
         if not self.eos:
             raise ValueError("Checkpoint has no EOS tokens")
         start = time.perf_counter()
+        wired_limit = min(
+            int(device.get("max_recommended_working_set_size", 0)),
+            max(0, memory - 8 * 1024**3),
+        )
+        if wired_limit > 0:
+            mx.set_wired_limit(wired_limit)
         mx.set_cache_limit(0)
         mx.clear_cache()
         mx.reset_peak_memory()
@@ -101,6 +111,7 @@ class Engine:
                 self.tokenizer.chat_template.encode()
             ).hexdigest(),
             "allocation_cache_limit_bytes": cache_limit,
+            "wired_limit_bytes": wired_limit,
             "load_seconds": time.perf_counter() - start,
             "load_peak_mlx_bytes": mx.get_peak_memory(),
             "process_peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
@@ -202,6 +213,49 @@ class Engine:
             mx.synchronize()
         return {"prepared_tokens": prepared, "preparation_seconds": time.perf_counter() - start}
 
+    def touch_resident_pages(self):
+        mx = self.mx
+        if getattr(self, "_touch_kernel", None) is None:
+            self._touch_kernel = mx.fast.metal_kernel(
+                name="flint_touch_resident_pages",
+                input_names=["buf", "num_pages"],
+                output_names=["out"],
+                source="""
+                    uint tid = thread_position_in_grid.x;
+                    uint n = num_pages[0];
+                    uint acc = 0u;
+                    for (uint p = tid; p < n; p += 1024u) {
+                        acc ^= ((const device uint*)buf)[p * 4096u];
+                    }
+                    if (tid == 0u && acc == 0xdeadbeefu) {
+                        out[0] = acc;
+                    } else if (tid == 0u) {
+                        out[0] = 1u;
+                    }
+                """,
+            )
+        arrays = list(getattr(self.runtime, "banks", ()))
+        if self._prompt_cache is not None and hasattr(self._prompt_cache.storage, "banks"):
+            arrays.extend(self._prompt_cache.storage.banks)
+        if not arrays:
+            return
+        with mx.stream(mx.new_stream(mx.gpu)):
+            outs = []
+            for arr in arrays:
+                if arr is not None and arr.nbytes >= 65536:
+                    pages = max(1, arr.nbytes // 16384)
+                    outs.append(
+                        self._touch_kernel(
+                            inputs=[arr, mx.array([pages], dtype=mx.uint32)],
+                            grid=(min(1024, pages), 1, 1),
+                            threadgroup=(min(256, pages), 1, 1),
+                            output_shapes=[(1,)],
+                            output_dtypes=[mx.uint32],
+                        )[0]
+                    )
+            if outs:
+                mx.eval(outs)
+
     def _schedule_prefix(self, ids, generated):
         from .prefix import PrefixPreparation
 
@@ -211,6 +265,7 @@ class Engine:
     def _take_prefix(self, ids):
         prefix, self._prompt_cache = self._prompt_cache, None
         pending, self._prefix_preparation = self._prefix_preparation, None
+        branch_cache = getattr(self, "_branch_cache", None)
         if pending is not None and pending.cache is not None:
             prepared = pending.cache
             if ids[: len(prepared.tokens)] != prepared.tokens:
@@ -219,6 +274,8 @@ class Engine:
                 prepared, _ = select_prefix(prepared, ids)
             if prepared is not None and len(prepared.tokens) > len(pending.origin.tokens):
                 prefix = prepared
+        if branch_cache is not None:
+            prefix = branch_cache.select_best(ids, prefix)
         return prefix
 
     def _generate_tokens(self, ids, sampling, *, should_stop, grammar=None, return_logprobs=False):
@@ -261,6 +318,9 @@ class Engine:
                 raise
             del prefix, preparation
             self._prompt_cache = session.prompt_cache
+            branch_cache = getattr(self, "_branch_cache", None)
+            if branch_cache is not None:
+                branch_cache.save(self._prompt_cache)
             text_stream = StreamingText(self.tokenizer)
             if sampling.presence_penalty:
                 session._state["presence_mask"] = mx.zeros(logits.size, mx.float32)
@@ -394,4 +454,5 @@ class Engine:
                 self._schedule_prefix(ids, generated)
             mx.synchronize()
             del session
-            mx.clear_cache()
+            if mx.get_cache_memory() > 2 * 1024**3:
+                mx.clear_cache()

@@ -15,14 +15,18 @@ _copy = mx.fast.metal_kernel(
 
 
 # MLX deepcopy can share mutable Metal inputs; copy into independent storage.
-def copy_array(value):
-    snapshot = _copy(
+def copy_array_async(value):
+    return _copy(
         inputs=[value, mx.array([value.size], mx.uint32)],
         grid=(value.size, 1, 1),
         threadgroup=(256, 1, 1),
         output_shapes=[value.shape],
         output_dtypes=[value.dtype],
     )[0]
+
+
+def copy_array(value):
+    snapshot = copy_array_async(value)
     mx.eval(snapshot)
     return snapshot
 
@@ -47,6 +51,7 @@ _write = mx.fast.metal_kernel(
 # Four append-only blocks fit alongside the fused decoder's weight/scratch buffers.
 BLOCK_TOKENS = 65536
 MAX_BLOCKS = 4
+MAX_REWIND_TOKENS = 4096
 
 
 class KVStorage:
@@ -94,11 +99,12 @@ class KVStorage:
             parts.append(part.reshape(2, 4, cap, 128)[:, :, :size])
         return parts[0] if len(parts) == 1 else mx.concatenate(parts, axis=2)
 
-    def write(self, index, offset, keys, values):
+    def write_async(self, index, offset, keys, values):
         start, cap = self.rows[index][61:63]
         count = keys.shape[-2]
         assert 0 <= offset < offset + count <= (self.capacity if self.rows[index][1] else cap)
         begin = 0
+        dones = []
         while begin < count:
             block, position = divmod(offset + begin, cap)
             size = min(count - begin, cap - position)
@@ -114,8 +120,12 @@ class KVStorage:
                 output_shapes=[(1,)],
                 output_dtypes=[mx.uint32],
             )
-            mx.eval(result)
+            dones.extend(result)
             begin += size
+        return dones
+
+    def write(self, index, offset, keys, values):
+        mx.eval(self.write_async(index, offset, keys, values))
 
 
 class FixedKVCache:
@@ -172,6 +182,8 @@ class FixedSlidingKVCache:
         self._valid = 0
         self._slot = 0
         self._ring_index = 0
+        self._history_k = None
+        self._history_v = None
 
     def grow(self, capacity):
         capacity = min(self.window_size, capacity)
@@ -183,6 +195,8 @@ class FixedSlidingKVCache:
 
     @property
     def state(self):
+        if self._history_k is not None:
+            return self.key_buffers, self.value_buffers, self._history_k, self._history_v
         return self.key_buffers, self.value_buffers
 
     @property
@@ -197,6 +211,56 @@ class FixedSlidingKVCache:
 
     def is_trimmable(self) -> bool:
         return False
+
+    def _record_history(self, keys: mx.array, values: mx.array, prev_offset: int):
+        if prev_offset >= MAX_REWIND_TOKENS:
+            return
+        keep = min(keys.shape[-2], MAX_REWIND_TOKENS - prev_offset)
+        if keep <= 0:
+            return
+        k_slice = keys[..., :keep, :]
+        v_slice = values[..., :keep, :]
+        if prev_offset == 0 or self._history_k is None:
+            self._history_k = k_slice
+            self._history_v = v_slice
+        else:
+            self._history_k = mx.concatenate(
+                (self._history_k[..., :prev_offset, :], k_slice), axis=-2
+            )
+            self._history_v = mx.concatenate(
+                (self._history_v[..., :prev_offset, :], v_slice), axis=-2
+            )
+
+    def can_rewind_to(self, target_pos: int) -> bool:
+        if target_pos <= 0 or target_pos > self.offset:
+            return False
+        if self.offset <= self.capacity and self._ring_index == 0:
+            return True
+        return self._history_k is not None and target_pos <= self._history_k.shape[-2]
+
+    def rewind_to(self, target_pos: int) -> bool:
+        if not self.can_rewind_to(target_pos):
+            return False
+        retained = min(self.capacity, target_pos)
+        next_slot = 1 - self._slot
+        if self.offset <= self.capacity and self._ring_index == 0:
+            src_k = self.key_buffers[self._slot][..., :retained, :]
+            src_v = self.value_buffers[self._slot][..., :retained, :]
+        else:
+            src_k = self._history_k[..., target_pos - retained : target_pos, :]
+            src_v = self._history_v[..., target_pos - retained : target_pos, :]
+        if self._history_k is not None and target_pos < self._history_k.shape[-2]:
+            self._history_k = self._history_k[..., :target_pos, :]
+            self._history_v = self._history_v[..., :target_pos, :]
+        self.key_buffers[next_slot][..., :retained, :] = src_k
+        self.value_buffers[next_slot][..., :retained, :] = src_v
+        self.key_buffers = tuple(mx.contiguous(value) for value in self.key_buffers)
+        self.value_buffers = tuple(mx.contiguous(value) for value in self.value_buffers)
+        self._slot = next_slot
+        self._valid = retained
+        self._ring_index = 0
+        self.offset = target_pos
+        return True
 
     def make_mask(self, n_tokens: int, window_size=None, return_array: bool = False):
         window = self.window_size if window_size is None else window_size
@@ -225,6 +289,7 @@ class FixedSlidingKVCache:
         return keys[..., : self._valid, :], values[..., : self._valid, :]
 
     def update_and_fetch(self, keys: mx.array, values: mx.array):
+        self._record_history(keys, values, self.offset)
         if keys.shape[-2] == 1:
             active_keys = self.key_buffers[self._slot]
             active_values = self.value_buffers[self._slot]

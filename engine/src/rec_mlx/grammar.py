@@ -1,3 +1,5 @@
+import json
+import threading
 import time
 from dataclasses import dataclass
 
@@ -29,17 +31,34 @@ class ConstraintCompiler:
             tokenizer, vocab_size=VOCAB, stop_token_ids=[tokenizer.eos_token_id]
         )
         self.compiler = xgr.GrammarCompiler(info, cache_limit_bytes=128 * 1024**2)
+        self._tools_cache = {}
+        self._tools_lock = threading.Lock()
+        self._stops = tuple(
+            self.tokenizer.convert_tokens_to_ids(x)
+            for x in ("<|end_of_text|>", "<|user|>", "<|observation|>")
+        )
 
     def tools(self, tools=None):
+        try:
+            key = (
+                None if tools is None else json.dumps(tools, sort_keys=True, separators=(",", ":"))
+            )
+        except TypeError:
+            key = repr(tools)
+        with self._tools_lock:
+            cached = self._tools_cache.get(key)
+            if cached is not None:
+                return cached
         tag = build_flint_glm_grammar(
             self.tokenizer, tools, enforce_tool_schemas=self.enforce_tool_schemas
         )
         compiled = self.compiler.compile_structural_tag(tag)
-        stops = tuple(
-            self.tokenizer.convert_tokens_to_ids(x)
-            for x in ("<|end_of_text|>", "<|user|>", "<|observation|>")
-        )
-        return Constraint(compiled, stops)
+        constraint = Constraint(compiled, self._stops)
+        with self._tools_lock:
+            if len(self._tools_cache) >= 64:
+                self._tools_cache.pop(next(iter(self._tools_cache)))
+            self._tools_cache[key] = constraint
+        return constraint
 
 
 class ConstraintSession:

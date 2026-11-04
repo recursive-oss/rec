@@ -1,6 +1,7 @@
 import json
 import sys
 import threading
+import time
 from dataclasses import asdict
 from queue import Empty, Queue
 from types import SimpleNamespace
@@ -58,7 +59,19 @@ class Generator(ResponseGenerator):
         self.busy = threading.Event()
         self._request_lock = threading.Lock()
         self.active_context = None
+        self._last_touch = time.monotonic()
         super().__init__(ModelProvider(engine, self.tokenizer, cli_args), prompt_cache=None)
+
+    def _next_request(self, timeout=None):
+        request = super()._next_request(timeout=timeout)
+        if request is None and not self.stopping.is_set():
+            touch = getattr(self.engine, "touch_resident_pages", None)
+            if touch is not None:
+                now = time.monotonic()
+                if now - self._last_touch >= 3.0:
+                    self._last_touch = now
+                    touch()
+        return request
 
     def cancel(self):
         with self._request_lock:
@@ -133,6 +146,7 @@ class Generator(ResponseGenerator):
                 should_stop=lambda: self.stopping.is_set() or not self.requests.empty()
             )
         finally:
+            self._last_touch = time.monotonic()
             self.busy.clear()
 
     def _start_request(self, request, args):
