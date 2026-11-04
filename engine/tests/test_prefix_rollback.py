@@ -4,9 +4,9 @@ from unittest.mock import patch
 
 import mlx.core as mx
 
-from rec_mlx.cache import FixedSlidingKVCache
+from rec_mlx.cache import FixedKVCache, FixedSlidingKVCache, KVStorage
 from rec_mlx.engine import Engine, Sampling
-from rec_mlx.prefix import PrefillCancelled, PromptCache, select_prefix
+from rec_mlx.prefix import PrefillCancelled, PrefixTreeCache, PromptCache, select_prefix
 from rec_mlx.quantized import QATSession
 
 
@@ -123,6 +123,70 @@ class PrefixRollbackTests(unittest.TestCase):
             logs.output,
             ["INFO:root:Prefill: prompt=11 common_prefix=9 reused=8 new=3"],
         )
+
+    def test_subchunk_exact_rewind_without_checkpoints(self):
+        prefix = self.prefix()
+        self.append(prefix, list(range(12)))
+        self.assertEqual(prefix.checkpoints, [])
+        diverged = list(range(9)) + [100, 101]
+        restored, common = select_prefix(prefix, diverged)
+        self.assertIs(restored, prefix)
+        self.assertEqual(common, 9)
+        self.assertEqual(len(restored.tokens), 9)
+        self.assertEqual(restored.layers[0].offset, 9)
+        self.append(restored, [100, 101])
+        fresh = self.prefix()
+        self.append(fresh, diverged)
+        for actual, wanted in zip(
+            restored.layers[1]._prior(), fresh.layers[1]._prior(), strict=True
+        ):
+            self.assertTrue(mx.array_equal(actual, wanted).item())
+
+    @unittest.skipUnless(mx.metal.is_available(), "requires Apple Metal")
+    def test_multi_branch_prefix_tree_cache_switch_and_restore(self):
+        metadata = [[0] * 64 for _ in range(50)]
+        metadata[0][1] = 1
+        storage = KVStorage(metadata, 32)
+        global_layer = FixedKVCache(storage, 0)
+        sliding_layer = FixedSlidingKVCache(
+            max_sequence_tokens=16, num_kv_heads=4, head_dim=128, window_size=5
+        )
+        cache = PromptCache([], [global_layer, sliding_layer], None, storage)
+        tree = PrefixTreeCache(max_branches=4)
+
+        def run_prompt(tokens):
+            nonlocal cache
+            selected = tree.select_best(tokens, cache)
+            restored, _ = select_prefix(selected, tokens)
+            cached = 0 if restored is None else len(restored.tokens)
+            suffix = tokens[cached:]
+            if suffix:
+                k = mx.broadcast_to(
+                    mx.array(suffix, dtype=mx.bfloat16).reshape(1, 1, len(suffix), 1),
+                    (1, 4, len(suffix), 128),
+                )
+                k = mx.contiguous(k)
+                v = mx.contiguous(-k)
+                cache.layers[0].update_and_fetch(k, v)
+                cache.layers[1].update_and_fetch(k, v)
+                cache.tokens.extend(suffix)
+                cache.logits = mx.array([suffix[-1]], dtype=mx.bfloat16)
+                mx.eval(cache.logits, [layer.state for layer in cache.layers])
+            tree.save(cache)
+            return cached
+
+        branch_a = list(range(1, 11))
+        branch_b = list(range(1, 7)) + [201, 202, 203]
+        self.assertEqual(run_prompt(branch_a), 0)
+        expected_global_a = mx.array(storage.layer(0, len(branch_a)))
+        expected_sliding_a = [mx.array(x) for x in cache.layers[1]._prior()]
+        mx.eval(expected_global_a, expected_sliding_a)
+
+        self.assertEqual(run_prompt(branch_b), 6)
+        self.assertEqual(run_prompt(branch_a), len(branch_a))
+        self.assertTrue(mx.array_equal(storage.layer(0, len(branch_a)), expected_global_a).item())
+        for actual, wanted in zip(cache.layers[1]._prior(), expected_sliding_a, strict=True):
+            self.assertTrue(mx.array_equal(actual, wanted).item())
 
 
 if __name__ == "__main__":
