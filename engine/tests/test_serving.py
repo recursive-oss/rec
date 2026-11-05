@@ -92,6 +92,29 @@ class Engine:
 
 
 class ServingTest(unittest.TestCase):
+    def test_reasoning_alias_precedence(self):
+        for stream in (False, True):
+            for fields, expected in (
+                ({"reasoning": "a"}, "a"),
+                ({"reasoning_content": "b"}, "b"),
+                ({"reasoning": "a", "reasoning_content": "a"}, "a"),
+                ({"reasoning": "a", "reasoning_content": "b"}, "a"),
+                ({"reasoning": "", "reasoning_content": "b"}, ""),
+                ({"reasoning": None, "reasoning_content": "b"}, None),
+            ):
+                with self.subTest(stream=stream, fields=fields):
+                    with patch.object(self.engine, "prompt", wraps=self.engine.prompt) as prompt:
+                        status, body = self.request(
+                            "B",
+                            max_tokens=1,
+                            stream=stream,
+                            messages=[{"role": "assistant", "content": "B", **fields}],
+                        )
+                        self.assertEqual(status, 200, body)
+                        seen = prompt.call_args.args[0][0]
+                        self.assertEqual(seen["reasoning_content"], expected)
+                        self.assertNotIn("reasoning", seen)
+
     def test_idle_preparation_follows_response_and_yields_to_queued_request(self):
         preparing = threading.Event()
         proceed = threading.Event()
