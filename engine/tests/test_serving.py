@@ -92,6 +92,62 @@ class Engine:
 
 
 class ServingTest(unittest.TestCase):
+    def test_body_timeout_rejects_without_generation_and_releases_admission(self):
+        with patch("rec_mlx.server.read_body", side_effect=TimeoutError("body read timed out")):
+            self.assertEqual(self.request("B", max_tokens=1)[0], 400)
+        self.assertEqual(self.engine.calls, [])
+        self.assertEqual(self.request("B", max_tokens=1)[0], 200)
+
+    def test_invalid_http_framing_is_rejected_before_generation(self):
+        for headers in (
+            b"",
+            b"Content-Length: 1\r\nContent-Length: 1\r\n",
+            b"Content-Length: 1\r\nTransfer-Encoding: chunked\r\n",
+            b"Transfer-Encoding: gzip\r\n",
+        ):
+            with self.subTest(headers=headers):
+                client = socket.create_connection(self.server.server_address, timeout=5)
+                try:
+                    client.sendall(
+                        b"POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\n"
+                        + headers
+                        + b"\r\nx"
+                    )
+                    response = http.client.HTTPResponse(client)
+                    response.begin()
+                    self.assertEqual(response.status, 400, response.read())
+                finally:
+                    client.close()
+        self.assertEqual(self.engine.calls, [])
+
+    def test_chunked_requests_on_both_apis(self):
+        for path in ("/v1/chat/completions", "/v1/messages"):
+            for stream in (False, True):
+                with self.subTest(path=path, stream=stream):
+                    body = json.dumps(
+                        {
+                            "model": "flint",
+                            "max_tokens": 1,
+                            "stream": stream,
+                            "messages": [{"role": "user", "content": "B"}],
+                        }
+                    ).encode()
+                    conn = http.client.HTTPConnection(*self.server.server_address, timeout=5)
+                    try:
+                        conn.request(
+                            "POST",
+                            path,
+                            [body[:10], body[10:]],
+                            {"Content-Type": "application/json"},
+                            encode_chunked=True,
+                        )
+                        response = conn.getresponse()
+                        payload = response.read()
+                        self.assertEqual(response.status, 200, payload)
+                        self.assertTrue(payload)
+                    finally:
+                        conn.close()
+
     def test_idle_preparation_follows_response_and_yields_to_queued_request(self):
         preparing = threading.Event()
         proceed = threading.Event()

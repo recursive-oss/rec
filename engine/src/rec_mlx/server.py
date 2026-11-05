@@ -16,6 +16,7 @@ from .anthropic import (
     messages_to_chat,
 )
 from .engine import Sampling
+from .http_body import read_body
 
 
 class RequestError(ValueError):
@@ -99,19 +100,31 @@ def make_server(
             if self.route() not in ("/v1/chat/completions", "/v1/messages"):
                 self._reject(404, "Unknown endpoint")
                 return
-            try:
-                if not 0 < int(self.headers["Content-Length"]) <= 8 * 1024 * 1024:
-                    raise ValueError("Request body must be between 1 byte and 8 MiB")
-            except (ValueError, TypeError) as error:
-                self._reject(400, str(error))
-                return
             if generator.stopping.is_set():
                 self._reject(503, "The server is stopping")
                 return
             if not admission.acquire(blocking=False):
                 self._reject(429, "The request queue is full; retry after a generation finishes")
                 return
+            source = self.rfile
             try:
+                timeout = self.connection.gettimeout()
+                try:
+                    self.connection.settimeout(10)
+                    body = read_body(self.rfile, self.headers)
+                except (ValueError, TimeoutError) as error:
+                    self.close_connection = True
+                    self._reject(400, str(error))
+                    return
+                finally:
+                    self.connection.settimeout(timeout)
+                self.rfile = io.BytesIO(body)
+                if "Transfer-Encoding" in self.headers:
+                    del self.headers["Transfer-Encoding"]
+                if "Content-Length" in self.headers:
+                    self.headers.replace_header("Content-Length", str(len(body)))
+                else:
+                    self.headers["Content-Length"] = str(len(body))
                 if self.route() == "/v1/messages":
                     self.anthropic = True
                     self._prepare_messages()
@@ -121,6 +134,7 @@ def make_server(
             except (BrokenPipeError, ConnectionResetError):
                 logging.info("Client disconnected; cancelling its generation")
             finally:
+                self.rfile = source
                 admission.release()
 
         def _prepare_messages(self):

@@ -109,6 +109,9 @@ The response contains generated text in `choices`. For other clients, use
 base URL `http://127.0.0.1:11500/v1`, model `flint`, and the API key from
 `rec auth token`.
 
+Requests may use `Content-Length` or `Transfer-Encoding: chunked` with a body
+of at most 8 MiB.
+
 The Anthropic-compatible API is available at
 `http://127.0.0.1:11500/v1/messages`. Point `ANTHROPIC_BASE_URL` at
 `http://127.0.0.1:11500` and send the token from `rec auth token` as a bearer
