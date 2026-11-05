@@ -24,8 +24,10 @@ class RequestError(ValueError):
 
 class Server(ThreadingHTTPServer):
     """HTTP server that binds either IPv4 or IPv6, and IPv4-mapped IPv6 when asked."""
+
     # The default backlog of 5 resets a burst of connections before the accept loop takes them.
     request_queue_size = 32
+
     def __init__(self, address, handler, **kwargs):
         self._bind_host = address[0]
         self.address_family = socket.AF_INET6 if ":" in address[0] else socket.AF_INET
