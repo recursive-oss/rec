@@ -109,6 +109,10 @@ The response contains generated text in `choices`. For other clients, use
 base URL `http://127.0.0.1:11500/v1`, model `flint`, and the API key from
 `rec auth token`.
 
+When replaying assistant messages, either `reasoning` or `reasoning_content` is
+accepted. If both are present, `reasoning` takes precedence, including when its
+value is empty or null.
+
 The Anthropic-compatible API is available at
 `http://127.0.0.1:11500/v1/messages`. Point `ANTHROPIC_BASE_URL` at
 `http://127.0.0.1:11500` and send the token from `rec auth token` as a bearer

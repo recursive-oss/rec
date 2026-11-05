@@ -286,8 +286,7 @@ def make_server(
             try:
                 for message in request.messages:
                     if "reasoning" in message:
-                        if "reasoning_content" in message:
-                            raise ValueError("Use one reasoning field per message")
+                        # Prefer the public response carrier when clients replay both aliases.
                         message["reasoning_content"] = message.pop("reasoning")
                 process_message_content(request.messages)
                 mode = self.body["grammar"] if "grammar" in self.body else grammar_mode
