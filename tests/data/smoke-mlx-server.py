@@ -9,6 +9,7 @@ exercise the Flint kernels. tests/build_smoke_runtime.py installs it.
 import argparse
 import http.server
 import json
+import socket
 import time
 from pathlib import Path
 
@@ -20,6 +21,7 @@ parser.add_argument("command", choices=("serve",))
 parser.add_argument("model")
 parser.add_argument("--model-dir", type=Path, required=True)
 parser.add_argument("--manifest", type=Path, required=True)
+parser.add_argument("--host", required=True)
 parser.add_argument("--port", type=int, required=True)
 parser.add_argument("--context-limit", type=int, required=True)
 parser.add_argument("--api-key-file", type=Path, required=True)
@@ -126,5 +128,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         )
 
 
-print(f"Listening on http://127.0.0.1:{args.port}/v1", flush=True)
-http.server.HTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
+class Server(http.server.HTTPServer):
+    # Bind like the Flint server: IPv6 literals need AF_INET6, and "::" also takes IPv4.
+    address_family = socket.AF_INET6 if ":" in args.host else socket.AF_INET
+
+    def server_bind(self):
+        if args.host == "::":
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        super().server_bind()
+
+
+host = f"[{args.host}]" if ":" in args.host else args.host
+print(f"Listening on http://{host}:{args.port}/v1", flush=True)
+Server((args.host, args.port), Handler).serve_forever()

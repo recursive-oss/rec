@@ -84,6 +84,16 @@ rec serve
 Keep this terminal open. When `flint is ready.` appears, connect a client from
 another terminal.
 
+To expose the server on your LAN, bind to all interfaces:
+
+```bash
+rec serve --host 0.0.0.0
+```
+
+From another machine, connect to `http://<this-mac's-IP>:11500/v1` with the
+`rec auth token` key. Traffic is unencrypted, so only use this on trusted
+networks.
+
 To use your own install of pi or OpenCode, run:
 
 ```bash
@@ -113,6 +123,76 @@ The Anthropic-compatible API is available at
 `http://127.0.0.1:11500/v1/messages`. Point `ANTHROPIC_BASE_URL` at
 `http://127.0.0.1:11500` and send the token from `rec auth token` as a bearer
 token or as `x-api-key`. The model is `flint`.
+
+<details>
+<summary>Connect pi or OpenCode on another machine</summary>
+
+On the Mac running rec, collect three values:
+
+- **Base URL**: `http://<this-mac's-IP>:11500/v1`.
+- **API key**: the output of `rec auth token`.
+- **Context**: shown by `rec status` (262,144 tokens by default). Use it as both
+  the context and output limit below. rec fits each reply to the space left.
+
+On the other machine, make the key available to the harness:
+
+```bash
+export REC_API_KEY='<key from rec auth token>'
+```
+
+**pi**: add the provider to `~/.pi/agent/models.json`. If the file exists, merge
+`rec` into its `providers`.
+
+```json
+{
+  "providers": {
+    "rec": {
+      "baseUrl": "http://<server-mac's-IP>:11500/v1",
+      "api": "openai-completions",
+      "apiKey": "REC_API_KEY",
+      "models": [{
+        "id": "flint", "name": "Flint", "reasoning": false, "input": ["text"],
+        "contextWindow": 262144, "maxTokens": 262144,
+        "compat": {
+          "supportsStore": false, "supportsDeveloperRole": false,
+          "supportsReasoningEffort": false, "supportsStrictMode": false,
+          "maxTokensField": "max_tokens"
+        }
+      }]
+    }
+  }
+}
+```
+
+Select it with `/model`, or start pi with `pi --provider rec --model flint`.
+
+**OpenCode 2.x**: add the provider to `~/.config/opencode/opencode.json`. If the
+file exists, merge `rec` into its `providers`.
+
+```json
+{
+  "model": "rec/flint",
+  "providers": {
+    "rec": {
+      "package": "@opencode/ai/providers/openai-compatible",
+      "name": "Recursive",
+      "settings": { "baseURL": "http://<server-mac's-IP>:11500/v1", "apiKey": "{env:REC_API_KEY}" },
+      "models": {
+        "flint": {
+          "name": "Flint",
+          "limit": { "context": 262144, "output": 65536 },
+          "body": { "max_completion_tokens": 262144 },
+          "capabilities": { "tools": true, "input": ["text"], "output": ["text"] }
+        }
+      }
+    }
+  }
+}
+```
+
+`model` makes Flint the default; remove it to keep yours.
+
+</details>
 
 
 ## Commands

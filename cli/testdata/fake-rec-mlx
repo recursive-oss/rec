@@ -3,6 +3,7 @@
 import argparse
 import http.server
 import json
+import socket
 from pathlib import Path
 
 parser = argparse.ArgumentParser()
@@ -12,6 +13,7 @@ for flag in ("--model-dir", "--manifest", "--api-key-file"):
     parser.add_argument(flag, type=Path, required=True)
 parser.add_argument("--port", type=int, required=True)
 parser.add_argument("--context-limit", type=int, required=True)
+parser.add_argument("--host", required=True)
 args = parser.parse_args()
 assert (args.model_dir / args.manifest.name).is_file()
 key = args.api_key_file.read_text().strip()
@@ -46,4 +48,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.reply({"choices": [{"index": 0, "message": message, "finish_reason": "stop"}]})
 
 
-http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
+class Server(http.server.ThreadingHTTPServer):
+    def __init__(self, address, handler, **kwargs):
+        self._bind_host = address[0]
+        self.address_family = socket.AF_INET6 if ":" in address[0] else socket.AF_INET
+        super().__init__(address, handler, **kwargs)
+
+    def server_bind(self):
+        if self.address_family == socket.AF_INET6 and self._bind_host == "::":
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        super().server_bind()
+
+
+server = Server((args.host, args.port), Handler)
+server.serve_forever()

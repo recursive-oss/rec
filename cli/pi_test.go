@@ -53,6 +53,8 @@ func TestClientsRejectInvalidStatus(t *testing.T) {
 		{Ready: true, Model: "other", Context: 8192, Endpoint: "http://127.0.0.1:11500/v1"},
 		{Ready: false, Model: "flint", Context: 8192, Endpoint: "http://127.0.0.1:11500/v1"},
 		{Ready: true, Model: "flint", Context: 1024, Endpoint: "http://127.0.0.1:11500/v1"},
+		{Ready: true, Model: "flint", Context: 8192, Endpoint: "http://localhost:11500/v1"},
+		{Ready: true, Model: "flint", Context: 8192, Endpoint: "http://127.0.0.1/v1"},
 	} {
 		p := Paths{Data: t.TempDir()}
 		if _, _, err := piConfig(p, s); err == nil {

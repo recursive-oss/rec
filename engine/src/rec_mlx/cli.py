@@ -1,6 +1,7 @@
 """Run Flint as a terminal chat or a local OpenAI-compatible server."""
 
 import argparse
+import ipaddress
 import json
 import logging
 import os
@@ -33,7 +34,13 @@ def main():
         help="total input and output tokens (default: %(default)s)",
     )
     parser.add_argument(
-        "--port", type=int, default=8080, help="loopback port for serve (default: %(default)s)"
+        "--port", type=int, default=8080, help="port for serve (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="IP address for serve to listen on; non-loopback requires --api-key-file "
+        "(default: %(default)s)",
     )
     parser.add_argument(
         "--grammar",
@@ -92,11 +99,20 @@ def main():
         )
     except ValueError as error:
         parser.error(str(error))
+    # Check valid key and host before Engine load
     api_key = None
     if args.api_key_file is not None:
         api_key = args.api_key_file.read_text().strip()
         if not api_key or any(c.isspace() for c in api_key):
             parser.error("API-key file must contain one nonempty token")
+    if args.command == "serve":
+        try:
+            address = parse_host(args.host)
+        except ValueError as error:
+            parser.error(str(error))
+        if not address.is_loopback and api_key is None:
+            parser.error("--api-key-file is required when --host is not a loopback address")
+        args.host = str(address)
     engine = Engine(
         args.model_dir,
         args.manifest,
@@ -123,13 +139,14 @@ def main():
 
         server = make_server(
             engine,
-            ("127.0.0.1", args.port),
+            (args.host, args.port),
             args.metrics,
             defaults=settings,
             api_key=api_key,
             grammar_mode=args.grammar,
         )
-        print(f"Listening on http://127.0.0.1:{server.server_port}/v1", flush=True)
+        host = f"[{args.host}]" if ":" in args.host and not args.host.startswith("[") else args.host
+        print(f"Listening on http://{host}:{server.server_port}/v1", flush=True)
 
         def stop(signum, frame):
             server.generator.cancel()
@@ -147,6 +164,17 @@ def main():
             server.server_close()
         return
     chat(engine, settings, args.metrics, grammar_mode=args.grammar)
+
+
+def parse_host(host):
+    """Validate --host like the rec CLI: IP literals only, no zone, IPv4-mapped IPv6 unmapped."""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is None or getattr(address, "scope_id", None):
+        raise ValueError("--host must be an IP address, such as 127.0.0.1 or 0.0.0.0")
+    return getattr(address, "ipv4_mapped", None) or address
 
 
 def chat(engine, settings, metrics_path, *, grammar_mode="flint"):

@@ -123,3 +123,26 @@ func TestHarnessShellCommand(t *testing.T) {
 		t.Fatalf("shell command does not reproduce the environment: %v %q", err, out)
 	}
 }
+
+func TestValidateClientStatusEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		endpoint string
+		ok       bool
+	}{
+		{"loopback", "http://127.0.0.1:11500/v1", true},
+		{"lan", "http://192.168.1.5:11500/v1", true},
+		{"ipv6 loopback", "http://[::1]:11500/v1", true},
+		{"https", "https://127.0.0.1:11500/v1", false},
+		{"hostname", "http://localhost:11500/v1", false},
+		{"missing port", "http://127.0.0.1/v1", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := Status{Ready: true, Model: "flint", Context: 8192, Endpoint: tc.endpoint}
+			err := validateClientStatus(s)
+			if (err == nil) != tc.ok {
+				t.Fatalf("validateClientStatus(%q) error = %v, want ok = %v", tc.endpoint, err, tc.ok)
+			}
+		})
+	}
+}
