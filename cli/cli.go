@@ -203,5 +203,8 @@ func printStatus(ui *screen, action string, s Status) {
 	}
 	if action == "status" {
 		ui.println(faintStyle.Render(fmt.Sprintf("    Context %s tokens · rec %s", formatTokens(s.Context), s.Version)))
+		if listen := networkListen(s); listen != "" {
+			ui.println(faintStyle.Render("    Listen " + listen + " · reachable from the network"))
+		}
 	}
 }

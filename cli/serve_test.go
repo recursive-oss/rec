@@ -80,6 +80,25 @@ func TestParseHostAndClientEndpoint(t *testing.T) {
 	}
 }
 
+func TestStatusShowsNetworkListenAddress(t *testing.T) {
+	for _, tc := range []struct{ listen, endpoint, want string }{
+		{"127.0.0.1:11500", "http://127.0.0.1:11500/v1", ""},
+		{"", "http://127.0.0.1:11500/v1", ""},
+		{"0.0.0.0:11500", "http://127.0.0.1:11500/v1", "Listen 0.0.0.0:11500 (all interfaces) · reachable from the network"},
+		{"[::]:11500", "http://[::1]:11500/v1", "Listen [::]:11500 (all interfaces) · reachable from the network"},
+		{"192.168.1.5:11500", "http://192.168.1.5:11500/v1", "Listen 192.168.1.5:11500 · reachable from the network"},
+	} {
+		var out bytes.Buffer
+		printStatus(newScreen(&out), "status", Status{Ready: true, Model: "flint", Version: "test", Context: 4096, Listen: tc.listen, Endpoint: tc.endpoint})
+		if tc.want == "" && strings.Contains(out.String(), "Listen") {
+			t.Fatalf("loopback status %q shows a listen line:\n%s", tc.listen, out.String())
+		}
+		if tc.want != "" && !strings.Contains(out.String(), tc.want) {
+			t.Fatalf("status for %q lacks %q:\n%s", tc.listen, tc.want, out.String())
+		}
+	}
+}
+
 func TestServeLifecycle(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("serving requires Apple Silicon")

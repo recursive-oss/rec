@@ -394,6 +394,20 @@ func serve(parent context.Context, p Paths, m Manifest, override, host string, p
 	}
 }
 
+// networkListen describes the listen address of a server reachable from other
+// machines, or returns "" for loopback and servers that predate Status.Listen.
+func networkListen(s Status) string {
+	host, _, _ := net.SplitHostPort(s.Listen)
+	addr, err := netip.ParseAddr(host)
+	if err != nil || addr.IsLoopback() {
+		return ""
+	}
+	if addr.IsUnspecified() {
+		return s.Listen + " (all interfaces)"
+	}
+	return s.Listen
+}
+
 func printReady(ui *screen, m Manifest, s Status, background bool) {
 	host, _, _ := net.SplitHostPort(s.Listen)
 	listen, _ := netip.ParseAddr(host)
