@@ -3,11 +3,11 @@
 rec_install() (
   set -euo pipefail
   umask 077
-  bold='' faint='' green='' red='' blue='' reset='' erase=''
+  bold='' faint='' green='' red='' yellow='' blue='' reset='' erase=''
   if [ -t 1 ] && [ "${TERM:-dumb}" != dumb ]; then
     erase=$'\r\033[K'
     if [ -z "${NO_COLOR:-}" ]; then
-      bold=$'\033[1m' faint=$'\033[2m' green=$'\033[32m' red=$'\033[31m' blue=$'\033[38;5;68m' reset=$'\033[0m'
+      bold=$'\033[1m' faint=$'\033[2m' green=$'\033[32m' red=$'\033[31m' yellow=$'\033[33m' blue=$'\033[38;5;68m' reset=$'\033[0m'
     fi
   fi
   fail() { printf '%s' "$erase"; printf '%srec install:%s %s\n' "$red$bold" "$reset" "$*" >&2; exit 1; }
@@ -44,15 +44,12 @@ rec_install() (
   mkdir "$lock_dir" 2>/dev/null || fail "another install is active; if interrupted, remove $lock_dir"
   tmp=$(mktemp -d "$data/.install.XXXXXX")
   trap 'rm -rf "$tmp"; rmdir "$lock_dir" 2>/dev/null || true' EXIT
-  existing=$(command -v rec || true)
   if [ -e "$bin/rec" ] || [ -L "$bin/rec" ]; then
     [ -L "$bin/rec" ] || fail "$bin/rec exists and is not a managed symlink"
     old=$(readlink "$bin/rec")
     case "$old" in "$data"/releases/*/rec) [ -f "$(dirname "$old")/.managed" ] || fail 'existing rec is not managed';; *) fail 'existing rec belongs to another program';; esac
-    [ -z "$existing" ] || [ "$existing" = "$bin/rec" ] || fail "rec already resolves to $existing"
   else
     old=''
-    [ -z "$existing" ] || fail "rec already resolves to $existing"
   fi
   printf '%sInstalling rec%s\n\n' "$bold" "$reset"
   begin "Downloading rec ${version:-(latest release)}"
@@ -128,6 +125,12 @@ rec_install() (
       *":$bin:"*) ;;
       *) printf '\n%sOpen a new terminal, or run: export PATH="$HOME/.local/bin:$PATH"%s\n' "$faint" "$reset";;
     esac
+  fi
+  # Other programs can be called rec too, such as the recorder in SoX. They stay untouched.
+  others=$(type -aP rec | while IFS= read -r other; do [ "$other" -ef "$bin/rec" ] || printf '  %s\n' "$other"; done | awk '!seen[$0]++') || true
+  if [ -n "$others" ]; then
+    printf '\n%sOther rec commands on your PATH:%s\n%s\nWhichever comes first on PATH runs as rec. This install is always at %s/rec.\n' \
+      "$yellow$bold" "$reset" "$others" "$bin" >&2
   fi
   if [ "$serve_after" = 1 ]; then
     rm -rf "$tmp"

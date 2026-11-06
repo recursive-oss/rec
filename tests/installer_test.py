@@ -154,10 +154,44 @@ def main():
         (home / ".local/bin/rec").write_text("unrelated program\n")
         install(env, ok=False)
         assert (home / ".local/bin/rec").read_text() == "unrelated program\n"
+
+        other = root / "other program"
+        other.mkdir()
+        (other / "rec").write_text('#!/bin/sh\necho "$*" >> "$HOME/other.log"\n')
+        (other / "rec").chmod(0o755)
+        notice = "Other rec commands"
+        listed = f"  {other}/rec\n"
+
+        # A conflict ahead of the install warns on the first install and on later updates.
+        home, env = new_home()
+        env["PATH"] = f"{other}:{env['PATH']}"
+        for _ in range(2):
+            r = install(env)
+            assert notice in r.stderr and listed in r.stderr, r.stderr
+            assert installed(home).parent.name == "0.3.0"
+        install(env, "--serve")
+        assert (home / "serve.log").read_text() == "serve\n"
+        assert not (home / "other.log").exists(), "installer ran the other program"
+
+        # A conflict behind the install is still listed, once per path, without the install itself.
+        home, env = new_home()
+        own = home / ".local/bin"
+        env["PATH"] = f"{own}/:{other}:{other}:{env['PATH']}"
+        r = install(env)
+        assert r.stderr.count(listed) == 1, r.stderr
+        assert f"  {own}/" not in r.stderr, r.stderr
+
+        # The install alone is not a conflict, however PATH spells its directory.
+        home, env = new_home()
+        assert notice not in install(env).stderr
+        own = home / ".local/bin"
+        for entry in [f"{own}", f"{own}/", f"{own}/."]:
+            r = install(dict(env, PATH=f"{entry}:{env['PATH']}"))
+            assert notice not in r.stderr, (entry, r.stderr)
         server.shutdown()
         server.server_close()
         print(
-            "Installer: public default URL, pins, idempotence, checksum/version/device rejection, running-server stop, --serve, platform checks and collision preservation passed"
+            "Installer: public default URL, pins, idempotence, checksum/version/device rejection, running-server stop, --serve, platform checks, collision preservation and other rec warnings passed"
         )
 
 
