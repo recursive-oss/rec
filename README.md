@@ -43,6 +43,10 @@ curl -fsSL https://raw.githubusercontent.com/recursive-oss/rec/main/install.sh |
 This installs `rec` in `~/.local/bin` and adds it to your PATH for new
 terminals. All other data lives under `~/.local/share/rec`.
 
+The installer leaves any other program named `rec`, such as the recorder in
+SoX, untouched and lists its path. Whichever comes first on your PATH runs as
+`rec`, and `~/.local/bin/rec` always runs this one.
+
 
 ## Usage
 
