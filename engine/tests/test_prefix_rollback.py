@@ -110,7 +110,7 @@ class PrefixRollbackTests(unittest.TestCase):
         with (
             patch("rec_mlx.prefix.select_prefix", wraps=select_prefix) as select,
             patch("rec_mlx.quantized.select_prefix", select),
-            self.assertLogs(level="INFO") as logs,
+            self.assertNoLogs(level="INFO"),
         ):
             self.assertEqual(
                 list(engine.generate_tokens(tokens, settings, should_stop=lambda: True)), []
@@ -119,10 +119,6 @@ class PrefixRollbackTests(unittest.TestCase):
         self.assertEqual(session.common_prefix_tokens, 9)
         self.assertIs(engine._prompt_cache, prefix)
         self.assertEqual(prefix.tokens, list(range(8)))
-        self.assertEqual(
-            logs.output,
-            ["INFO:root:Prefill: prompt=11 common_prefix=9 reused=8 new=3"],
-        )
 
 
 if __name__ == "__main__":

@@ -107,12 +107,4 @@ def select_prefix(prefix, tokens):
                 prefix.checkpoints = [
                     item for item in prefix.checkpoints if item.position < checkpoint.position
                 ]
-    cached = 0 if prefix is None else len(prefix.tokens)
-    logging.info(
-        "Prefill: prompt=%d common_prefix=%d reused=%d new=%d",
-        len(tokens),
-        common,
-        cached,
-        len(tokens) - cached,
-    )
     return prefix, common
