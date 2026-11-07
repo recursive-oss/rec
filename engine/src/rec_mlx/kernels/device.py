@@ -18,6 +18,7 @@ def profile_for_device(info):
         ("applegpu_g16s", "Apple M4 Max"): "M4 Max",
         ("applegpu_g17s", "Apple M5 Pro"): "M5 Pro",
         ("applegpu_g17s", "Apple M5 Max"): "M5 Max",
+        ("applegpu_g18g", "Apple M6"): "M6",
     }
     architecture = info["architecture"]
     identity = (architecture, info["device_name"])
@@ -36,6 +37,7 @@ def profile_for_device(info):
         chip=chips[identity],
         architecture=architecture,
         prefill_chunk_size=4096 if chips[identity] == "M5 Pro" else 2048,
+        # Keep M6 on the generic expert path until its specialized shader is validated.
         # The specialized M4 resident shader fails scalar/packet parity.
-        specialize_mixed_experts=chips[identity] not in ("M4 Pro", "M4 Max"),
+        specialize_mixed_experts=chips[identity] not in ("M4 Pro", "M4 Max", "M6"),
     )

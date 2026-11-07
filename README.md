@@ -26,11 +26,16 @@ excluded.</sub></p>
 
 ## Requirements
 
-- Apple Silicon Mac with an M4 Pro, M4 Max, M5 Pro, or M5 Max
-- At least 48 GB unified memory
+- Apple Silicon Mac with an M4 Pro, M4 Max, M5 Pro, M5 Max, or M6
+- At least 32 GB unified memory
 - About 30 GB free disk space
 - [Node.js 22](https://nodejs.org/en/download) and npm for pi
 
+On Macs with 32 GB (or less than 48 GB), packaged builds select the community
+[Flint mixed 3/4-bit checkpoint](https://huggingface.co/mlx-community/flint-mixed-3-4bit)
+(17.8 GB), with a 131,072-token default context. Macs with 48 GB or more use the
+official INT4 checkpoint. The mixed checkpoint is an unofficial community conversion.
+Use `rec doctor` to see the selected revision and context.
 
 ## Install
 
@@ -141,3 +146,8 @@ Run `rec COMMAND --help` for a command's options.
 - Community guidelines: [Code of conduct](CODE_OF_CONDUCT.md).
 - Security vulnerabilities: [Private reporting instructions](SECURITY.md).
 - License: [Apache 2.0](LICENSE).
+
+## Runtime build
+
+The bundled runtime uses CPython 3.14.10, nanobind 3.1.0, and MLX built from
+GitHub commit `fc344c986c4169d99f76b5d95ae6b4a58a359a63` (HEAD when upgraded).

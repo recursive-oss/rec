@@ -57,8 +57,8 @@ class Engine:
         if platform.system() != "Darwin" or platform.machine() != "arm64":
             raise RuntimeError("Flint requires an Apple Silicon Mac")
         memory = int(subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True))
-        if memory < 48 * 1024**3:
-            raise RuntimeError("This build targets Macs with at least 48 GiB of memory")
+        if memory < 32 * 1024**3:
+            raise RuntimeError("This build targets Macs with at least 32 GiB of memory")
         import mlx.core as mx
 
         device = mx.device_info()

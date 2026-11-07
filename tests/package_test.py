@@ -34,7 +34,21 @@ with tempfile.TemporaryDirectory(prefix="rec-package-test-") as td:
         str(output),
     ]
     subprocess.run([*base, "--runtime-dir", str(runtime)], check=True)
+    subprocess.run(
+        [
+            *base,
+            "--runtime-dir",
+            str(runtime),
+            "--low-memory-manifest",
+            str(root / "packaging/flint-mixed-3-4bit-mlx.json"),
+        ],
+        check=True,
+    )
     descriptor = json.loads(output.with_name(output.name + ".manifest.json").read_text())
+    low = json.loads(output.with_name(output.name + ".low-memory.manifest.json").read_text())
+    assert low["entry"] == "config.json" and low["context"] == 131072
+    assert low["runtime_sha256"] == descriptor["runtime_sha256"]
+    assert low["runtime_files"] == descriptor["runtime_files"]
     assert {f["name"] for f in descriptor["runtime_files"]} == {
         "rec-mlx",
         "python/bin/README",

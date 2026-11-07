@@ -17,10 +17,14 @@ jobs:
       - name: Build and package
         run: |
           version=${GITHUB_REF_NAME#v}
-          uv python install 3.12.12
-          python_root="$(uv python dir)/cpython-3.12.12-macos-aarch64-none"
-          "$python_root/bin/python3.12" packaging/build-mlx-runtime.py --python-root "$python_root" --output .build/bundle-mlx
+          if ! xcrun -sdk macosx metal --version > /dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          uv python install 3.14.10
+          python_root="$(uv python dir)/cpython-3.14.10-macos-aarch64-none"
+          "$python_root/bin/python3.14" packaging/build-mlx-runtime.py --python-root "$python_root" --output .build/bundle-mlx
           python3 packaging/package.py --runtime-dir .build/bundle-mlx --manifest packaging/flint-int4-mlx.json \
+            --low-memory-manifest packaging/flint-mixed-3-4bit-mlx.json \
             --version "$version" --output dist/rec-darwin-arm64
           test "$(dist/rec-darwin-arm64 --version)" = "rec $version"
       - name: Publish

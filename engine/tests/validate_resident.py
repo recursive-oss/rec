@@ -15,6 +15,7 @@ from rec_mlx.engine import Engine, Sampling
 from rec_mlx.kernels import build_decoder, megakernel
 from rec_mlx.kernels.masked_sampling import FilteredResidentSampler
 from rec_mlx.quantized import QATModel
+from rec_mlx.random_state import restore_random_key
 
 
 def validate_stopping(engine, resident, specification, tokenizer, prompt):
@@ -58,7 +59,7 @@ def validate_stopping(engine, resident, specification, tokenizer, prompt):
                 for token in tokens[:begin]:
                     reference.forward_token(token)
                     candidate.forward_token(token)
-                mx.random.state[0] = keys[begin]
+                restore_random_key(keys[begin])
                 expected = [
                     pick(reference.forward_token(tokens[begin + i]), begin + i + 1)
                     for i in range(stop)
@@ -67,7 +68,7 @@ def validate_stopping(engine, resident, specification, tokenizer, prompt):
                 model.eos_tokens = [expected[-1]]
                 # Each compiled graph must capture this fixture's EOS, not a previous one.
                 resident.filtered = FilteredResidentSampler(resident.module, engine, specification)
-                mx.random.state[0] = keys[begin]
+                restore_random_key(keys[begin])
                 actual = resident.block(candidate._state, tokens[begin], 8, 43 + begin, **settings)
                 assert actual == expected and len(actual) == stop, "EOS truncation mismatch"
                 assert mx.array_equal(mx.random.state[0], expected_key).item(), "EOS RNG mismatch"
@@ -117,7 +118,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True, help="Flint checkpoint directory")
     parser.add_argument("--output", type=Path, required=True, help="JSON file for the results")
+    parser.add_argument(
+        "--collect-native-differences",
+        action="store_true",
+        help="Run remaining checks and report every native parity failure before failing",
+    )
     args = parser.parse_args()
+    native_differences = []
     mx.set_cache_limit(256 * 1024**2)
     model = QATModel(args.model)
     specification = {}
@@ -227,7 +234,7 @@ def main():
                     count = min((1, 3, 8)[packets % 3], steps - position)
                     packet_input = pending
                     expected, logits, traces = [], [], []
-                    mx.random.state[0] = scalar_key
+                    restore_random_key(scalar_key)
                     for offset in range(count):
                         value, trace = engine.forward(reference._state, pending)
                         if temperature == 0 and position + offset < 8:
@@ -237,12 +244,39 @@ def main():
                                 h = layer(h, None, cache)
                                 native_trace.append(h.reshape(-1))
                             native_logits = model.native.lm_head(model.native.model.norm(h))
-                            assert mx.array_equal(mx.stack(native_trace), trace).item(), (
-                                "Native layer mismatch"
-                            )
-                            assert mx.array_equal(native_logits.reshape(-1), value).item(), (
-                                "Native logits mismatch"
-                            )
+                            stacked = mx.stack(native_trace)
+                            same_layers = mx.array_equal(stacked, trace).item()
+                            same_logits = mx.array_equal(native_logits.reshape(-1), value).item()
+                            if not same_layers or not same_logits:
+                                native_differences.append(
+                                    dict(
+                                        context=context,
+                                        seed=seed,
+                                        position=position + offset,
+                                        presence_penalty=penalty,
+                                        layers_equal=same_layers,
+                                        logits_equal=same_logits,
+                                        max_layer_error=float(
+                                            mx.max(
+                                                mx.abs(
+                                                    stacked.astype(mx.float32)
+                                                    - trace.astype(mx.float32)
+                                                )
+                                            ).item()
+                                        ),
+                                        max_logit_error=float(
+                                            mx.max(
+                                                mx.abs(
+                                                    native_logits.reshape(-1).astype(mx.float32)
+                                                    - value
+                                                )
+                                            ).item()
+                                        ),
+                                    )
+                                )
+                            if not args.collect_native_differences:
+                                assert same_layers, "Native layer mismatch"
+                                assert same_logits, "Native logits mismatch"
                             native_checks += 1
                         pending = choose(value, position + offset + 1)
                         seen.add(pending)
@@ -252,7 +286,7 @@ def main():
                         if pending in model.eos_tokens:
                             break
                     scalar_key = mx.random.state[0]
-                    mx.random.state[0] = packet_key
+                    restore_random_key(packet_key)
                     actual = resident.block(
                         candidate._state,
                         packet_input,
@@ -390,9 +424,14 @@ def main():
         cases=results,
         stopping=stopping,
         performance=performance,
+        native_differences=native_differences,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n")
+    if native_differences:
+        raise AssertionError(
+            f"{len(native_differences)} native-reference parity checks failed; see {args.output}"
+        )
 
 
 if __name__ == "__main__":

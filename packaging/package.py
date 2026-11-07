@@ -66,6 +66,9 @@ def main():
         help="model manifest, such as packaging/flint-int4-mlx.json",
     )
     p.add_argument(
+        "--low-memory-manifest", type=Path, help="alternate manifest for Macs below 48 GiB"
+    )
+    p.add_argument(
         "--version",
         default="0.1.0-dev",
         help="version reported by rec --version (default: %(default)s)",
@@ -78,6 +81,14 @@ def main():
         m, archive = payload(a.runtime_dir, a.manifest)
     except ValueError as error:
         p.error(str(error))
+    low = None
+    if a.low_memory_manifest:
+        low = json.loads(a.low_memory_manifest.read_text())
+        for key in ("engine", "os", "arch", "backend", "model"):
+            if low[key] != m[key]:
+                p.error(f"low-memory manifest disagrees on {key}")
+        low["runtime_files"] = m["runtime_files"]
+        low["runtime_sha256"] = m["runtime_sha256"]
     root = Path(__file__).resolve().parents[1]
     output = a.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -91,9 +102,9 @@ def main():
         assets.mkdir()
         (assets / "manifest.json").write_text(json.dumps(m, indent=2) + "\n")
         (assets / "runtime.tar.gz").write_bytes(archive)
-        subprocess.run(
-            ["go", "test", "./cli", "-run", "TestEmbeddedManifest"], cwd=build, check=True
-        )
+        if low is not None:
+            (assets / "manifest-low-memory.json").write_text(json.dumps(low, indent=2) + "\n")
+        subprocess.run(["go", "test", "./cli", "-run", "TestEmbedded"], cwd=build, check=True)
         env = dict(os.environ, CGO_ENABLED="0", GOOS=m["os"], GOARCH=m["arch"])
         staged = build / "rec"
         subprocess.run(
@@ -116,6 +127,10 @@ def main():
     data = output.read_bytes()
     output.with_name(output.name + ".meta").write_text(f"{sha(data)} {len(data)}\n")
     output.with_name(output.name + ".manifest.json").write_text(json.dumps(m, indent=2) + "\n")
+    if low is not None:
+        output.with_name(output.name + ".low-memory.manifest.json").write_text(
+            json.dumps(low, indent=2) + "\n"
+        )
     print(output)
 
 

@@ -1,14 +1,18 @@
 [build-system]
-requires = ["hatchling>=1.27,<2", "mlx==0.32.0", "nanobind==2.13.0"]
+requires = [
+    "hatchling>=1.27,<2",
+    "mlx @ git+https://github.com/ml-explore/mlx.git@fc344c986c4169d99f76b5d95ae6b4a58a359a63",
+    "nanobind==3.1.0",
+]
 build-backend = "hatchling.build"
 
 [project]
 name = "rec-mlx"
 version = "0.1.0"
 description = "Flint inference engine for Apple Silicon"
-requires-python = ">=3.12"
+requires-python = ">=3.14.10"
 dependencies = [
-    "mlx==0.32.0",
+    "mlx @ git+https://github.com/ml-explore/mlx.git@fc344c986c4169d99f76b5d95ae6b4a58a359a63",
     "mlx-lm==0.31.3",
     "transformers==5.16.1",
     "xgrammar==0.2.1",
@@ -19,6 +23,9 @@ validation = ["pytest==8.4.2"]
 
 [project.scripts]
 rec-mlx = "rec_mlx.cli:main"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rec_mlx"]
