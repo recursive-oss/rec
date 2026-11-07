@@ -8,8 +8,10 @@ from rec_mlx.checkpoint import validate
 
 class CheckpointTests(unittest.TestCase):
     def fixture(self, directory, bits):
+        # Minimal metadata and placeholder shards exercise validation without loading model weights.
         quantization = {"group_size": 64, "bits": 4}
         if bits == 3:
+            # Mixed exports override embeddings to 8 bits and routed experts to 3 bits.
             quantization["model.embed_tokens"] = {"group_size": 64, "bits": 8}
             for projection in ("gate_proj", "up_proj", "down_proj"):
                 quantization[f"model.layers.1.mlp.switch_mlp.{projection}"] = {
@@ -56,6 +58,7 @@ class CheckpointTests(unittest.TestCase):
         return config, profile if bits == 4 else directory / "config.json"
 
     def test_both_checkpoint_formats(self):
+        # Official INT4 uses a manifest; mixed exports describe their layout in config.json.
         for bits, expected in ((4, "mlx-affine-int4"), (3, "mlx-affine-int3-int4")):
             with self.subTest(bits=bits), tempfile.TemporaryDirectory() as temporary:
                 directory = Path(temporary)
@@ -67,6 +70,7 @@ class CheckpointTests(unittest.TestCase):
                     self.assertEqual(identity["model_id"], "flint-mixed-3-4bit")
 
     def test_mixed_rejects_wrong_layout(self):
+        # Reject metadata that disagrees with the quantization layout expected by the kernels.
         for mutation in ("expert_bits", "group_size", "output_bits", "conflicting_config"):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
                 directory = Path(temporary)
@@ -84,6 +88,7 @@ class CheckpointTests(unittest.TestCase):
                     validate(directory, profile)
 
     def test_extra_shard_rejected(self):
+        # An unindexed shard can indicate a stale or accidentally combined checkpoint.
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             _, profile = self.fixture(directory, 3)
