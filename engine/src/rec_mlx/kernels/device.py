@@ -24,6 +24,18 @@ def profile_for_device(info):
     identity = (architecture, info["device_name"])
     if identity not in chips:
         raise ValueError(f"Unsupported resident kernel device: {identity}")
+    if chips[identity] == "M6":
+        # M6 has its own schedule: larger attention teams and 4096-token
+        # prefill chunks regress this 32 GiB device in local Flint benchmarks.
+        return DeviceProfile(
+            chip="M6",
+            architecture=architecture,
+            workers=36,
+            mlp_workers=32,
+            head_workers=32,
+            prefill_chunk_size=2048,
+            specialize_mixed_experts=False,
+        )
     if chips[identity] == "M5 Max":
         return DeviceProfile(
             chip=chips[identity],
@@ -37,7 +49,6 @@ def profile_for_device(info):
         chip=chips[identity],
         architecture=architecture,
         prefill_chunk_size=4096 if chips[identity] == "M5 Pro" else 2048,
-        # Keep M6 on the generic expert path until its specialized shader is validated.
         # The specialized M4 resident shader fails scalar/packet parity.
-        specialize_mixed_experts=chips[identity] not in ("M4 Pro", "M4 Max", "M6"),
+        specialize_mixed_experts=chips[identity] not in ("M4 Pro", "M4 Max"),
     )
