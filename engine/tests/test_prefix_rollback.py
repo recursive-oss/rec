@@ -120,6 +120,49 @@ class PrefixRollbackTests(unittest.TestCase):
         self.assertIs(engine._prompt_cache, prefix)
         self.assertEqual(prefix.tokens, list(range(8)))
 
+    @unittest.skipUnless(mx.metal.is_available(), "requires Apple Metal")
+    def test_completed_prefill_logs_tokens_per_second(self):
+        # Freeze the existing prefill timer: three uncached tokens / 0.5 s = 6 t/s.
+        # No decoding is needed to check the completed-prefill diagnostic.
+        for cached, elapsed, expected in (
+            (8, 0.5, "6 t/s"),
+            (11, 0.5, "n/a t/s"),
+            (8, 0.0, "n/a t/s"),
+        ):
+            with self.subTest(cached=cached, elapsed=elapsed):
+                session = SimpleNamespace(
+                    prefill=lambda *args, **kwargs: mx.array([[0., 1.]]),
+                    cached_tokens=cached,
+                    common_prefix_tokens=9,
+                    prompt_cache=SimpleNamespace(layers=[], checkpoint_bytes=0),
+                    _state={"kv": SimpleNamespace(nbytes=0), "capacity": 0,
+                            "growth_count": 0, "growth_seconds": 0.},
+                )
+                engine = Engine.__new__(Engine)
+                engine.mx = mx
+                engine.runtime = SimpleNamespace(
+                    make_session=lambda **kwargs: session, metadata=[],
+                    device_profile=SimpleNamespace(chip="M6"),
+                )
+                engine.context_limit = 32
+                engine.eos = {0}
+                engine.tokenizer = None
+                engine._prompt_cache = None
+                engine._prefix_preparation = None
+                with (
+                    patch("rec_mlx.engine.StreamingText"),
+                    patch("rec_mlx.engine.time.perf_counter",
+                          side_effect=[10., 10.+elapsed, 10.+elapsed]),
+                    self.assertLogs(level="INFO") as logs,
+                ):
+                    list(engine._generate_tokens(list(range(11)), Sampling(max_tokens=1),
+                                                 should_stop=lambda: True))
+                self.assertEqual(
+                    logs.output,
+                    [f"INFO:root:Prefill: prompt=11 common_prefix=9 reused={cached} "
+                     f"new={11-cached} {expected}"],
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
