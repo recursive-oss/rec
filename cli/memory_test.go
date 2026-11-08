@@ -59,7 +59,7 @@ func TestEmbeddedLowMemoryManifest(t *testing.T) {
 			t.Fatal("explicit profile was replaced")
 		}
 	})
-	if low.RuntimeSHA != primary.RuntimeSHA || low.MinRAM != 32<<30 || low.Context != 131072 || low.Entry != "config.json" {
+	if low.RuntimeSHA != primary.RuntimeSHA || low.MinRAM != 32<<30 || low.Context != 262144 || low.Entry != "config.json" {
 		t.Fatalf("invalid low-memory profile: %+v", low)
 	}
 }

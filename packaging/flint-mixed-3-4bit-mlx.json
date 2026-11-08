@@ -7,7 +7,7 @@
   "os": "darwin",
   "arch": "arm64",
   "backend": "metal",
-  "context": 131072,
+  "context": 262144,
   "max_context": 262144,
   "min_ram_bytes": 34359738368,
   "entry": "config.json",
