@@ -252,6 +252,14 @@ class Engine:
             try:
                 logits = session.prefill(ids, prefix=prefix, should_stop=should_stop)
             except PrefillCancelled:
+                # Retain the prefix diagnostic on cancellation; no completed rate exists.
+                logging.info(
+                    "Prefill: prompt=%d common_prefix=%d reused=%d new=%d n/a t/s (cancelled)",
+                    len(ids),
+                    session.common_prefix_tokens,
+                    session.cached_tokens,
+                    len(ids) - session.cached_tokens,
+                )
                 if preparation is not None and prefix is preparation.cache:
                     # Keep the original input anchor until a new request completes prefill.
                     self._prompt_cache = preparation.origin

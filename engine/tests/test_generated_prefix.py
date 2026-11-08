@@ -135,6 +135,9 @@ class PreparedPrefixTests(unittest.TestCase):
         prepared = engine._prefix_preparation.cache
 
         class CancelledSession:
+            common_prefix_tokens = 0
+            cached_tokens = 0
+
             def prefill(self, tokens, *, prefix, should_stop):
                 self.prompt_cache = prefix
                 raise PrefillCancelled()
