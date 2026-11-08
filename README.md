@@ -89,6 +89,15 @@ rec serve
 Keep this terminal open. When `flint is ready.` appears, connect a client from
 another terminal.
 
+After each prompt finishes processing, the server logs prefill throughput:
+
+```text
+Prefill: prompt=74051 common_prefix=62433 reused=62433 new=11618 200 t/s
+```
+
+The rate is newly processed prompt tokens divided by prefill time. Fully cached
+prompts report `n/a t/s`. This measures prefill, rather than generated-token speed.
+
 To use your own install of pi or OpenCode, run:
 
 ```bash
