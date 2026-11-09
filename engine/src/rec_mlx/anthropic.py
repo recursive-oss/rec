@@ -65,6 +65,24 @@ def messages_to_chat(body):
     return chat, set(body) - _MAPPED, _include_thinking(body.get("thinking"))
 
 
+def _message_usage(usage):
+    """Split Chat's inclusive prompt count into new input and actual KV reuse.
+
+    Example: prompt_tokens=100, cached_tokens=80 means 20 new input tokens
+    and 80 cache reads. Rec has automatic local prefix reuse, not Anthropic's
+    billed cache-creation tiers, so cache_creation_input_tokens stays zero.
+    """
+    total = usage.get("prompt_tokens", 0)
+    cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0) or 0
+    cached = max(0, min(total, cached))
+    return {
+        "input_tokens": total - cached,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": cached,
+        "output_tokens": usage.get("completion_tokens", 0),
+    }
+
+
 def chat_to_message(response, *, stop_sequences=(), include_thinking=True):
     choice = response["choices"][0]
     message = choice.get("message") or {}
@@ -80,10 +98,7 @@ def chat_to_message(response, *, stop_sequences=(), include_thinking=True):
         "content": _blocks(message, include_thinking),
         "stop_reason": stop_reason,
         "stop_sequence": stop_sequence,
-        "usage": {
-            "input_tokens": usage.get("prompt_tokens", 0),
-            "output_tokens": usage.get("completion_tokens", 0),
-        },
+        "usage": _message_usage(usage),
     }
 
 
@@ -115,6 +130,7 @@ class MessageEventStream:
         self.raw = raw
         self.status = status
         self.input_tokens = input_tokens
+        self.usage = {"prompt_tokens": input_tokens, "completion_tokens": 0}
         self.stop_sequences = tuple(stop_sequences)
         self.include_thinking = include_thinking
         self.pending = b""
@@ -177,9 +193,11 @@ class MessageEventStream:
             self.message_id = _message_id(chunk.get("id"))
             self.model = chunk.get("model", self.model)
         usage = chunk.get("usage")
-        if usage and not chunk.get("choices"):
-            self.output_tokens = usage.get("completion_tokens", 0)
-            return
+        if usage:
+            self.usage.update(usage)
+            self.output_tokens = usage.get("completion_tokens", self.output_tokens)
+            if not chunk.get("choices"):
+                return
         choices = chunk.get("choices") or []
         if not choices:
             return
@@ -252,7 +270,7 @@ class MessageEventStream:
                     "model": self.model,
                     "stop_reason": None,
                     "stop_sequence": None,
-                    "usage": {"input_tokens": self.input_tokens, "output_tokens": 0},
+                    "usage": _message_usage(self.usage),
                 },
             },
         )
@@ -269,7 +287,10 @@ class MessageEventStream:
             {
                 "type": "message_delta",
                 "delta": {"stop_reason": stop_reason, "stop_sequence": stop_sequence},
-                "usage": {"output_tokens": self.output_tokens},
+                # Cache reuse is only known when mlx-lm emits final Chat usage.
+                # Send the complete cumulative split so SDKs replace the
+                # provisional message_start counts rather than double count.
+                "usage": _message_usage(self.usage),
             },
         )
         self._emit("message_stop", {"type": "message_stop"})
