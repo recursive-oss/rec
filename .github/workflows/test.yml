@@ -41,4 +41,9 @@ jobs:
         with:
           node-version: '22'
       - *cache-clients
+      - name: Ensure Metal compiler
+        run: |
+          if ! xcrun -sdk macosx metal --version > /dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
       - run: make test-engine

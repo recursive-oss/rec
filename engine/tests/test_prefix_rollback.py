@@ -117,12 +117,14 @@ class PrefixRollbackTests(unittest.TestCase):
             )
         self.assertEqual(select.call_count, 1)
         self.assertEqual(session.common_prefix_tokens, 9)
+        self.assertEqual(len(logs.output), 1)
+        self.assertTrue(
+            logs.output[0].startswith(
+                "INFO:root:Prefill: prompt=11 common_prefix=9 reused=8 new=3"
+            )
+        )
         self.assertIs(engine._prompt_cache, prefix)
         self.assertEqual(prefix.tokens, list(range(8)))
-        self.assertEqual(
-            logs.output,
-            ["INFO:root:Prefill: prompt=11 common_prefix=9 reused=8 new=3"],
-        )
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import platform
 import resource
 import subprocess
@@ -57,8 +58,8 @@ class Engine:
         if platform.system() != "Darwin" or platform.machine() != "arm64":
             raise RuntimeError("Flint requires an Apple Silicon Mac")
         memory = int(subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True))
-        if memory < 48 * 1024**3:
-            raise RuntimeError("This build targets Macs with at least 48 GiB of memory")
+        if memory < 32 * 1024**3:
+            raise RuntimeError("This build targets Macs with at least 32 GiB of memory")
         import mlx.core as mx
 
         device = mx.device_info()
@@ -87,7 +88,13 @@ class Engine:
         mx.set_cache_limit(0)
         mx.clear_cache()
         mx.reset_peak_memory()
-        self.runtime, self.resident_sampler = build_decoder(QATModel(directory), optimized=True)
+        self.native_decode = self.identity["weight_format"] == "mlx-affine-oq3e"
+        if self.native_decode:
+            from types import SimpleNamespace
+            self.runtime = SimpleNamespace(model=QATModel(directory), prefill_chunk_size=512, device_profile=profile)
+            self.resident_sampler = None
+        else:
+            self.runtime, self.resident_sampler = build_decoder(QATModel(directory), optimized=True)
         # Packing replaces native weights with lazy views. Materialize them on their creation
         # stream before HTTP threads use the native prefill model.
         mx.eval(self.runtime.model.native.parameters())
@@ -156,7 +163,11 @@ class Engine:
 
             try:
                 with grammar.session() if grammar is not None else nullcontext(None) as constraint:
-                    yield from self._generate_tokens(
+                    decoder = self._generate_tokens
+                    if getattr(self, "native_decode", False):
+                        from .native_decode import generate
+                        decoder = lambda *a, **kw: generate(self, *a, **kw)
+                    yield from decoder(
                         ids,
                         sampling,
                         should_stop=should_stop,
@@ -251,6 +262,14 @@ class Engine:
             try:
                 logits = session.prefill(ids, prefix=prefix, should_stop=should_stop)
             except PrefillCancelled:
+                # Retain the prefix diagnostic on cancellation; no completed rate exists.
+                logging.info(
+                    "Prefill: prompt=%d common_prefix=%d reused=%d new=%d n/a t/s (cancelled)",
+                    len(ids),
+                    session.common_prefix_tokens,
+                    session.cached_tokens,
+                    len(ids) - session.cached_tokens,
+                )
                 if preparation is not None and prefix is preparation.cache:
                     # Keep the original input anchor until a new request completes prefill.
                     self._prompt_cache = preparation.origin
@@ -274,6 +293,17 @@ class Engine:
                     top_k=sampling.top_k,
                 )
             prefill_end = time.perf_counter()
+            new_tokens = len(ids) - session.cached_tokens
+            elapsed = prefill_end - start
+            speed = f"{new_tokens / elapsed:.0f} t/s" if new_tokens and elapsed > 0 else "n/a t/s"
+            logging.info(
+                "Prefill: prompt=%d common_prefix=%d reused=%d new=%d %s",
+                len(ids),
+                session.common_prefix_tokens,
+                session.cached_tokens,
+                new_tokens,
+                speed,
+            )
             prefill_peak = mx.get_peak_memory()
             first = None
             packet = []

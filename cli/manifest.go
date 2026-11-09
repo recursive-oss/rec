@@ -149,10 +149,34 @@ func loadManifest(path string) (Manifest, error) {
 		return Manifest{}, err
 	}
 	m, err := decodeManifest(data)
+	if err == nil && path == "" {
+		lowData, lowErr := assets.ReadFile("assets/manifest-low-memory.json")
+		if lowErr == nil {
+			low, decodeErr := decodeManifest(lowData)
+			if decodeErr != nil {
+				return Manifest{}, decodeErr
+			}
+			ram, memoryErr := physicalMemory()
+			if memoryErr != nil {
+				return Manifest{}, memoryErr
+			}
+			m = manifestForMemory(m, low, ram)
+		} else if !os.IsNotExist(lowErr) {
+			return Manifest{}, lowErr
+		}
+	}
 	if err == nil && (m.OS != runtime.GOOS || m.Arch != runtime.GOARCH) {
 		err = fmt.Errorf("bundle targets %s/%s, this machine is %s/%s", m.OS, m.Arch, runtime.GOOS, runtime.GOARCH)
 	}
 	return m, err
+}
+
+// Select the smaller checkpoint below 48 GiB. Explicit --manifest bypasses this.
+func manifestForMemory(primary, low Manifest, ram int64) Manifest {
+	if ram < 48*1024*1024*1024 {
+		return low
+	}
+	return primary
 }
 
 func digest(b []byte) string        { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
@@ -190,4 +214,28 @@ func verifyFileInto(path string, f File, progress io.Writer) error {
 		return fmt.Errorf("SHA-256 mismatch: %s", filepath.Base(path))
 	}
 	return nil
+}
+
+// Explicit profiles share the packaged engine but retain separate model hashes.
+func selectQuant(current Manifest, quant, manifest string) (Manifest, error) {
+	if quant == "auto" {
+		return current, nil
+	}
+	if manifest != "" {
+		return Manifest{}, fmt.Errorf("--quant cannot be combined with --manifest")
+	}
+	name := ""
+	switch quant {
+	case "3/4", "mixed-3-4":
+		name = "manifest-low-memory.json"
+	case "oq3e":
+		name = "manifest-oq3e.json"
+	default:
+		return Manifest{}, fmt.Errorf("unknown quant %q; choose auto, 3/4, or oq3e", quant)
+	}
+	data, err := assets.ReadFile("assets/" + name)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("quant %s is not included in this binary; rebuild the package", quant)
+	}
+	return decodeManifest(data)
 }

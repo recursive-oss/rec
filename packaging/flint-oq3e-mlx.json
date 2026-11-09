@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "model": "flint",
+  "revision": "flint-oq3e",
+  "development": false,
+  "engine": "mlx",
+  "os": "darwin",
+  "arch": "arm64",
+  "backend": "metal",
+  "context": 262144,
+  "max_context": 262144,
+  "min_ram_bytes": 34359738368,
+  "entry": "config.json",
+  "files": [
+    {
+      "name": "config.json",
+      "url": "https://huggingface.co/mlx-community/flint-oQ3e/resolve/274084481e0cafc1850408b315bb3375ec46a280/config.json",
+      "size": 93877,
+      "sha256": "2c81e0122299a82877056780577f8cc4a52196ea644dd9ff2e61957042646ff1"
+    },
+    {
+      "name": "model-00001-of-00004.safetensors",
+      "url": "https://huggingface.co/mlx-community/flint-oQ3e/resolve/274084481e0cafc1850408b315bb3375ec46a280/model-00001-of-00004.safetensors",
+      "size": 5051387989,
+      "sha256": "f0f097583b1d7c0a301ed53296b42684fc04ac9b846430d6e6633b699ffb7283"
+    },
+    {
+      "name": "model-00002-of-00004.safetensors",
+      "url": "https://huggingface.co/mlx-community/flint-oQ3e/resolve/274084481e0cafc1850408b315bb3375ec46a280/model-00002-of-00004.safetensors",
+      "size": 5049969669,
+      "sha256": "3a47671453c44b4a36ff2e3ab32638e523ceab283f40e89a95d4f8855080c247"
+    },
+    {
+      "name": "model-00003-of-00004.safetensors",
+      "url": "https://huggingface.co/mlx-community/flint-oQ3e/resolve/274084481e0cafc1850408b315bb3375ec46a280/model-00003-of-00004.safetensors",
+      "size": 5049969054,
+      "sha256": "1bd14adf5f75432a879f8a2d7eafee25e9e63ca3415efbbfb3998ab53b1ec2ed"
+    },
+    {
+      "name": "model-00004-of-00004.safetensors",
+      "url": "https://huggingface.co/mlx-community/flint-oQ3e/resolve/274084481e0cafc1850408b315bb3375ec46a280/model-00004-of-00004.safetensors",
+      "size": 3288352472,
+      "sha256": "80f96478bc89207ebb5bbada7268995f684105317188b00ca3c8559fb969837e"
+    },
+    {
+      "name": "model.safetensors.index.json",
+      "url": "https://huggingface.co/mlx-community/flint-oQ3e/resolve/274084481e0cafc1850408b315bb3375ec46a280/model.safetensors.index.json",
+      "size": 182839,
+      "sha256": "2b5ae25fe3c6739fd18b04bf403f3dbe39dfc53bc2bf6e092d522e41dc92389e"
+    },
+    {
+      "name": "tokenizer.json",
+      "url": "https://huggingface.co/mlx-community/flint-oQ3e/resolve/274084481e0cafc1850408b315bb3375ec46a280/tokenizer.json",
+      "size": 10879128,
+      "sha256": "a263cce0b7e2b03f7ee07ce809783ef4b47f160c3f268a4ea1524f638da45b68"
+    },
+    {
+      "name": "tokenizer_config.json",
+      "url": "https://huggingface.co/mlx-community/flint-oQ3e/resolve/274084481e0cafc1850408b315bb3375ec46a280/tokenizer_config.json",
+      "size": 30439,
+      "sha256": "159ac88217e90ffd0a4a294726048bb302829e82e1958dc85bb203aa79138fbf"
+    }
+  ]
+}

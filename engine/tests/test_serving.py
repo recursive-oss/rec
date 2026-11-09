@@ -408,7 +408,8 @@ class ServingTest(unittest.TestCase):
         self.assertEqual(message["content"], [{"type": "text", "text": "x"}])
         self.assertEqual(message["stop_reason"], "max_tokens")
         self.assertEqual(message["usage"]["output_tokens"], 1)
-        self.assertEqual(message["usage"]["input_tokens"], 1)
+        self.assertEqual(message["usage"]["input_tokens"], 0)
+        self.assertEqual(message["usage"]["cache_read_input_tokens"], 1)
         self.assertEqual(
             logs.output, ["WARNING:root:Ignoring unsupported request field 'service_tier'"]
         )
@@ -434,6 +435,8 @@ class ServingTest(unittest.TestCase):
         delta = json.loads(raw.split("event: message_delta\ndata: ", 1)[1].split("\n", 1)[0])
         self.assertEqual(delta["delta"]["stop_reason"], "max_tokens")
         self.assertEqual(delta["usage"]["output_tokens"], 2)
+        self.assertEqual(delta["usage"]["input_tokens"], 0)
+        self.assertEqual(delta["usage"]["cache_read_input_tokens"], 1)
 
     def test_messages_translates_errors_raised_before_generation(self):
         first = self.pool.submit(self.request, "A", max_tokens=2)

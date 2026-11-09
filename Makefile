@@ -20,16 +20,16 @@ test-cli:
 	python3 tests/installer_test.py
 	python3 tests/package_test.py
 
-PYTHON_ROOT = $(shell uv python dir)/cpython-3.12.12-macos-aarch64-none
+PYTHON_ROOT = $(shell uv python dir)/cpython-3.14.10-macos-aarch64-none
 
 test-engine:
-	cd engine && uv venv --allow-existing --python 3.12 && uv pip install '.[validation]'
+	cd engine && uv venv --allow-existing --python 3.14.10 && uv pip install '.[validation]'
 	cd engine && .venv/bin/pytest -v -rs
-	uv python install 3.12.12
+	uv python install 3.14.10
 	rm -rf .build/bundle-mlx .build/smoke
-	$(PYTHON_ROOT)/bin/python3.12 packaging/build-mlx-runtime.py --python-root $(PYTHON_ROOT) --output .build/bundle-mlx
+	$(PYTHON_ROOT)/bin/python3.14 packaging/build-mlx-runtime.py --python-root $(PYTHON_ROOT) --output .build/bundle-mlx
 	python3 tests/build_smoke_runtime.py --runtime .build/bundle-mlx --output .build/smoke
 	python3 packaging/package.py --runtime-dir .build/smoke/runtime --manifest .build/smoke/smoke-mlx.json --output .build/rec-smoke
 	python3 tests/smoke_test.py .build/rec-smoke
 	go build -o .build/rec ./cli
-	python3 tests/protocol_test.py .build/bundle-mlx/python/bin/python3.12 .build/rec
+	python3 tests/protocol_test.py .build/bundle-mlx/python/bin/python3.14 .build/rec

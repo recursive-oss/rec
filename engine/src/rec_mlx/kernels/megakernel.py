@@ -984,11 +984,16 @@ class FullModel:
     def __init__(self, model, workers=40, mlp_workers=32, head_workers=32):
         from .device import profile_for_device
 
+        assert mx.device_info()["architecture"] in (
+            "applegpu_g16s",
+            "applegpu_g17s",
+            "applegpu_g18s",
+            "applegpu_g18g",
+        )
         self.device_profile = profile_for_device(mx.device_info())
         self.team_mlp_workers = mlp_workers
         self.workers = workers
         assert model.config["quantization"]["group_size"] == 64
-        assert mx.device_info()["architecture"] in ("applegpu_g16s", "applegpu_g17s")
         assert len(model.layers) == 49 and model.config["hidden_size"] == 2048
         assert tuple(
             model.config[key]

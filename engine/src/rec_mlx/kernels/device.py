@@ -18,11 +18,24 @@ def profile_for_device(info):
         ("applegpu_g16s", "Apple M4 Max"): "M4 Max",
         ("applegpu_g17s", "Apple M5 Pro"): "M5 Pro",
         ("applegpu_g17s", "Apple M5 Max"): "M5 Max",
+        ("applegpu_g18g", "Apple M6"): "M6",
     }
     architecture = info["architecture"]
     identity = (architecture, info["device_name"])
     if identity not in chips:
         raise ValueError(f"Unsupported resident kernel device: {identity}")
+    if chips[identity] == "M6":
+        # M6 has its own schedule: larger attention teams and 4096-token
+        # prefill chunks regress this 32 GiB device in local Flint benchmarks.
+        return DeviceProfile(
+            chip="M6",
+            architecture=architecture,
+            workers=36,
+            mlp_workers=32,
+            head_workers=32,
+            prefill_chunk_size=2048,
+            specialize_mixed_experts=False,
+        )
     if chips[identity] == "M5 Max":
         return DeviceProfile(
             chip=chips[identity],

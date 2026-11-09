@@ -259,7 +259,15 @@ class MessagesResponseTests(unittest.TestCase):
         )
         self.assertEqual(message["id"], "msg_abc")
         self.assertEqual(message["stop_reason"], "tool_use")
-        self.assertEqual(message["usage"], {"input_tokens": 3, "output_tokens": 5})
+        self.assertEqual(
+            message["usage"],
+            {
+                "input_tokens": 3,
+                "output_tokens": 5,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        )
         self.assertEqual(
             message["content"][0], {"type": "thinking", "thinking": "Because", "signature": ""}
         )
@@ -280,6 +288,39 @@ class MessagesResponseTests(unittest.TestCase):
         self.assertEqual(hidden["content"], [{"type": "text", "text": "Stop here"}])
         self.assertEqual(hidden["stop_reason"], "stop_sequence")
         self.assertEqual(hidden["stop_sequence"], "here")
+
+    def test_cache_usage_preserves_reuse_without_double_counting(self):
+        usage = {
+            "prompt_tokens": 100,
+            "completion_tokens": 6,
+            "prompt_tokens_details": {"cached_tokens": 80},
+        }
+        message = chat_to_message({"choices": [{"message": {"content": "OK"}}], "usage": usage})
+        expected = {
+            "input_tokens": 20,
+            "cache_read_input_tokens": 80,
+            "cache_creation_input_tokens": 0,
+            "output_tokens": 6,
+        }
+        self.assertEqual(message["usage"], expected)
+        raw = io.BytesIO()
+        stream = MessageEventStream(raw, input_tokens=100)
+        for chunk in [
+            {"choices": [{"delta": {"content": "OK"}, "finish_reason": "stop"}]},
+            {"choices": [], "usage": usage},
+        ]:
+            stream.write(f"data: {json.dumps(chunk)}\n\n".encode())
+        stream.write(b"data: [DONE]\n\n")
+        events = [
+            json.loads(line[6:])
+            for line in raw.getvalue().decode().splitlines()
+            if line.startswith("data: ")
+        ]
+        final = next(e for e in events if e["type"] == "message_delta")
+        self.assertEqual(final["usage"], expected)
+        self.assertEqual(
+            final["usage"]["input_tokens"] + final["usage"]["cache_read_input_tokens"], 100
+        )
 
     def test_stream_emits_the_messages_event_sequence(self):
         raw = io.BytesIO()

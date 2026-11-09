@@ -26,11 +26,16 @@ excluded.</sub></p>
 
 ## Requirements
 
-- Apple Silicon Mac with an M4 Pro, M4 Max, M5 Pro, or M5 Max
-- At least 48 GB unified memory
+- Apple Silicon Mac with an M4 Pro, M4 Max, M5 Pro, M5 Max, or M6
+- At least 32 GB unified memory
 - About 30 GB free disk space
 - [Node.js 22](https://nodejs.org/en/download) and npm for pi
 
+On Macs with 32 GB (or less than 48 GB), packaged builds select the community
+[Flint mixed 3/4-bit checkpoint](https://huggingface.co/mlx-community/flint-mixed-3-4bit)
+(17.8 GB), with a 262,144-token default context. Macs with 48 GB or more use the
+official INT4 checkpoint. The mixed checkpoint is an unofficial community conversion.
+Use `rec doctor` to see the selected revision and context.
 
 ## Install
 
@@ -83,6 +88,15 @@ rec serve
 
 Keep this terminal open. When `flint is ready.` appears, connect a client from
 another terminal.
+
+After each prompt finishes processing, the server logs prefill throughput:
+
+```text
+Prefill: prompt=74051 common_prefix=62433 reused=62433 new=11618 200 t/s
+```
+
+The rate is newly processed prompt tokens divided by prefill time. Fully cached
+prompts report `n/a t/s`. This measures prefill, rather than generated-token speed.
 
 To use your own install of pi or OpenCode, run:
 
@@ -141,3 +155,38 @@ Run `rec COMMAND --help` for a command's options.
 - Community guidelines: [Code of conduct](CODE_OF_CONDUCT.md).
 - Security vulnerabilities: [Private reporting instructions](SECURITY.md).
 - License: [Apache 2.0](LICENSE).
+
+## Runtime build
+
+The bundled runtime uses CPython 3.14.10, nanobind 3.1.0, and MLX built from
+GitHub commit `fc344c986c4169d99f76b5d95ae6b4a58a359a63` (HEAD when upgraded).
+
+### Choose the Flint quantization
+
+This development binary includes two small-memory checkpoints:
+
+```sh
+rec serve --quant 3/4
+rec serve --quant oq3e
+```
+
+Stop the existing server before switching (`rec stop`). `--quant` also works
+with `rec pull` and `rec doctor`; `auto` preserves RAM-based selection. Explicit
+`--manifest` and explicit `--quant` are mutually exclusive.
+
+`3/4` selects `mlx-community/flint-mixed-3-4bit` with the existing optimized
+Rec kernels. `oq3e` selects pinned `mlx-community/flint-oQ3e` weights, preserving
+their per-module 3/6/8-bit affine quantization through native MLX operations.
+The oQ3e path reuses a matching prompt prefix using isolated native MLX KV
+snapshots and BF16 KV. It is not the resident fused decode path, so performance
+differs. Both small-memory profiles default to 262,144 total tokens. Override
+with `--context TOKENS`; the architectural maximum does not guarantee available RAM.
+
+Prefix reuse is automatic for oQ3e. A snapshot immediately before the previous
+prompt's final token can be reused when it matches the beginning of the next
+request. Different prefixes recompute safely; this is a single in-memory prefix,
+not a disk cache or arbitrary branching cache. Decode runs on separate cache
+objects, including sliding-window offsets, so it cannot mutate the saved prefix.
+The log and API usage report reused/cached prompt tokens. On one 252-token M6
+smoke prompt, reuse was 251 tokens: 0.029 s prefill versus 0.255 s uncached after
+warm-up. Deterministic cached and uncached output token IDs matched exactly.

@@ -21,11 +21,7 @@ func preflight(m Manifest) error {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		return fmt.Errorf("rec requires an Apple Silicon Mac")
 	}
-	s, err := command("/usr/sbin/sysctl", "-n", "hw.memsize")
-	if err != nil {
-		return err
-	}
-	ram, err := strconv.ParseInt(s, 10, 64)
+	ram, err := physicalMemory()
 	if err != nil {
 		return err
 	}
@@ -40,4 +36,12 @@ func preflight(m Manifest) error {
 		return err
 	}
 	return checkAppleChip(chip)
+}
+
+func physicalMemory() (int64, error) {
+	s, err := command("/usr/sbin/sysctl", "-n", "hw.memsize")
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(s, 10, 64)
 }

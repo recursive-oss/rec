@@ -66,18 +66,36 @@ def main():
         help="model manifest, such as packaging/flint-int4-mlx.json",
     )
     p.add_argument(
+        "--low-memory-manifest", type=Path, help="alternate manifest for Macs below 48 GiB"
+    )
+    p.add_argument(
         "--version",
         default="0.1.0-dev",
         help="version reported by rec --version (default: %(default)s)",
     )
+    p.add_argument("--oq3e-manifest", type=Path, help="oQ3e checkpoint descriptor")
     p.add_argument("--output", type=Path, required=True, help="path of the rec executable to write")
     a = p.parse_args()
+    # Existing release commands already select the small-memory descriptor.
+    # Include its sibling oQ3e profile without requiring workflow changes.
+    if a.oq3e_manifest is None and a.low_memory_manifest:
+        sibling = a.low_memory_manifest.with_name("flint-oq3e-mlx.json")
+        if sibling.is_file():
+            a.oq3e_manifest = sibling
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", a.version):
         p.error("invalid version")
     try:
         m, archive = payload(a.runtime_dir, a.manifest)
     except ValueError as error:
         p.error(str(error))
+    low = None
+    if a.low_memory_manifest:
+        low = json.loads(a.low_memory_manifest.read_text())
+        for key in ("engine", "os", "arch", "backend", "model"):
+            if low[key] != m[key]:
+                p.error(f"low-memory manifest disagrees on {key}")
+        low["runtime_files"] = m["runtime_files"]
+        low["runtime_sha256"] = m["runtime_sha256"]
     root = Path(__file__).resolve().parents[1]
     output = a.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -91,9 +109,16 @@ def main():
         assets.mkdir()
         (assets / "manifest.json").write_text(json.dumps(m, indent=2) + "\n")
         (assets / "runtime.tar.gz").write_bytes(archive)
-        subprocess.run(
-            ["go", "test", "./cli", "-run", "TestEmbeddedManifest"], cwd=build, check=True
-        )
+        if low is not None:
+            (assets / "manifest-low-memory.json").write_text(json.dumps(low, indent=2) + "\n")
+        if a.oq3e_manifest:
+            oq = json.loads(a.oq3e_manifest.read_text())
+            for key in ("engine", "os", "arch", "backend", "model"):
+                if oq[key] != m[key]: p.error(f"oQ3e manifest disagrees on {key}")
+            oq["runtime_files"] = m["runtime_files"]
+            oq["runtime_sha256"] = m["runtime_sha256"]
+            (assets / "manifest-oq3e.json").write_text(json.dumps(oq, indent=2)+"\n")
+        subprocess.run(["go", "test", "./cli", "-run", "TestEmbedded"], cwd=build, check=True)
         env = dict(os.environ, CGO_ENABLED="0", GOOS=m["os"], GOARCH=m["arch"])
         staged = build / "rec"
         subprocess.run(
@@ -111,11 +136,19 @@ def main():
             env=env,
             check=True,
         )
-        shutil.copy2(staged, output)
+        # Replace the inode atomically: overwriting a running Mach-O can leave
+        # macOS with stale code-signature pages and cause SIGKILL on launch.
+        replacement = output.with_name(output.name + ".new")
+        shutil.copy2(staged, replacement)
+        os.replace(replacement, output)
     output.chmod(0o755)
     data = output.read_bytes()
     output.with_name(output.name + ".meta").write_text(f"{sha(data)} {len(data)}\n")
     output.with_name(output.name + ".manifest.json").write_text(json.dumps(m, indent=2) + "\n")
+    if low is not None:
+        output.with_name(output.name + ".low-memory.manifest.json").write_text(
+            json.dumps(low, indent=2) + "\n"
+        )
     print(output)
 
 

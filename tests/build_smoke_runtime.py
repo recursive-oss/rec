@@ -39,7 +39,7 @@ def main():
     launcher = runtime / "rec-mlx"
     launcher.write_text(
         '#!/bin/sh\nset -eu\nroot=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\n'
-        'exec "$root/python/bin/python3.12" -I -B "$root/smoke_server.py" "$@"\n'
+        'exec "$root/python/bin/python3.14" -I -B "$root/smoke_server.py" "$@"\n'
     )
     launcher.chmod(0o755)
     shutil.copy2(root / "tests/data/smoke-mlx.json", args.output / "smoke-mlx.json")

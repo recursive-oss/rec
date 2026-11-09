@@ -90,6 +90,7 @@ func run(args []string) error {
 	}
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	manifest := flags.String("manifest", "", "")
+	quant := flags.String("quant", "auto", "")
 	runtimeDir := flags.String("runtime-dir", "", "")
 	var contextTokens int
 	port := 11500
@@ -108,6 +109,9 @@ func run(args []string) error {
 		return fmt.Errorf("port must be between 1 and 65535")
 	}
 	m, e := loadManifest(*manifest)
+	if e == nil {
+		m, e = selectQuant(m, *quant, *manifest)
+	}
 	if e == nil && command == "serve" {
 		flags.Visit(func(f *flag.Flag) {
 			if f.Name == "context" {
