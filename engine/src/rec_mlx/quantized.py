@@ -18,14 +18,19 @@ class QATModel:
 
     def __init__(self, directory):
         self.config = json.loads((directory / "config.json").read_text())
-        export = self.config["mlx_export"]
-        assert export["bits"] == 4 and export["routed_expert_bits"] in (3, 4)
-        assert export["embedding_bits"] == 8
+        export = self.config.get("mlx_export")
+        oq = export is None
+        assert oq or (export["bits"] == 4 and export["routed_expert_bits"] in (3, 4))
+        assert oq or export["embedding_bits"] == 8
         native = Model(ModelArgs.from_dict(self.config))
 
         def quantization(path, module):
             if not hasattr(module, "to_quantized"):
                 return False
+            if oq:
+                q = self.config["quantization"]
+                spec = q.get("language_model." + path, q.get(path, q))
+                return {"group_size": spec["group_size"], "bits": spec["bits"], "mode": "affine"}
             bits = 4
             if path == "model.embed_tokens":
                 bits = 8
@@ -38,7 +43,13 @@ class QATModel:
         for path in sorted(directory.glob("model-*.safetensors")):
             shard = mx.load(str(path))
             assert not weights.keys() & shard.keys(), f"Duplicate tensor in {path}"
-            weights.update(shard)
+            for key, value in shard.items():
+                key = key.removeprefix("language_model.")
+                if oq and key.endswith(".mlp.expert_bias"):
+                    key = key.removesuffix(".expert_bias") + ".gate.expert_bias"
+                if key in weights:
+                    raise ValueError(f"Duplicate normalized tensor: {key}")
+                weights[key] = value
         native.load_weights(list(native.sanitize(weights).items()), strict=True)
         native.eval()
         mx.eval(native.parameters())

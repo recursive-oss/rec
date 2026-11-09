@@ -15,6 +15,7 @@ type commandHelp struct {
 }
 
 var developmentOptions = [][2]string{
+	{"--quant PROFILE", "Checkpoint: auto, 3/4, or oq3e (native MLX)"},
 	{"--manifest FILE", "Use this manifest instead of the bundled one"},
 	{"--runtime-dir DIR", "Use this runtime instead of the bundled one; needs --manifest"},
 }

@@ -88,7 +88,13 @@ class Engine:
         mx.set_cache_limit(0)
         mx.clear_cache()
         mx.reset_peak_memory()
-        self.runtime, self.resident_sampler = build_decoder(QATModel(directory), optimized=True)
+        self.native_decode = self.identity["weight_format"] == "mlx-affine-oq3e"
+        if self.native_decode:
+            from types import SimpleNamespace
+            self.runtime = SimpleNamespace(model=QATModel(directory), prefill_chunk_size=512, device_profile=profile)
+            self.resident_sampler = None
+        else:
+            self.runtime, self.resident_sampler = build_decoder(QATModel(directory), optimized=True)
         # Packing replaces native weights with lazy views. Materialize them on their creation
         # stream before HTTP threads use the native prefill model.
         mx.eval(self.runtime.model.native.parameters())
@@ -157,7 +163,11 @@ class Engine:
 
             try:
                 with grammar.session() if grammar is not None else nullcontext(None) as constraint:
-                    yield from self._generate_tokens(
+                    decoder = self._generate_tokens
+                    if getattr(self, "native_decode", False):
+                        from .native_decode import generate
+                        decoder = lambda *a, **kw: generate(self, *a, **kw)
+                    yield from decoder(
                         ids,
                         sampling,
                         should_stop=should_stop,

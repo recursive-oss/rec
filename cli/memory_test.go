@@ -63,3 +63,18 @@ func TestEmbeddedLowMemoryManifest(t *testing.T) {
 		t.Fatalf("invalid low-memory profile: %+v", low)
 	}
 }
+
+func TestQuantSelectionErrors(t *testing.T) {
+	for _, quant := range []string{"bad", "4bit"} {
+		if _, err := selectQuant(Manifest{}, quant, ""); err == nil {
+			t.Fatalf("accepted %q", quant)
+		}
+	}
+	if _, err := selectQuant(Manifest{}, "oq3e", "custom.json"); err == nil {
+		t.Fatal("accepted conflicting manifest")
+	}
+	m, err := selectQuant(Manifest{Revision: "test"}, "auto", "custom.json")
+	if err != nil || m.Revision != "test" {
+		t.Fatal("auto changed explicit manifest")
+	}
+}

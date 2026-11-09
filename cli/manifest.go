@@ -215,3 +215,27 @@ func verifyFileInto(path string, f File, progress io.Writer) error {
 	}
 	return nil
 }
+
+// Explicit profiles share the packaged engine but retain separate model hashes.
+func selectQuant(current Manifest, quant, manifest string) (Manifest, error) {
+	if quant == "auto" {
+		return current, nil
+	}
+	if manifest != "" {
+		return Manifest{}, fmt.Errorf("--quant cannot be combined with --manifest")
+	}
+	name := ""
+	switch quant {
+	case "3/4", "mixed-3-4":
+		name = "manifest-low-memory.json"
+	case "oq3e":
+		name = "manifest-oq3e.json"
+	default:
+		return Manifest{}, fmt.Errorf("unknown quant %q; choose auto, 3/4, or oq3e", quant)
+	}
+	data, err := assets.ReadFile("assets/" + name)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("quant %s is not included in this binary; rebuild the package", quant)
+	}
+	return decodeManifest(data)
+}

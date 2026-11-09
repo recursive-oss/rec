@@ -10,8 +10,8 @@ def validate(directory: Path, manifest_path: Path) -> dict:
     if manifest_path.name == "config.json":
         index = json.loads((directory / "model.safetensors.index.json").read_text())
         manifest = {
-            "model_id": "flint-mixed-3-4bit",
-            "weight_format": "mlx-affine-int3-int4",
+            "model_id": "flint-oq3e" if "mlx_export" not in config else "flint-mixed-3-4bit",
+            "weight_format": "mlx-affine-oq3e" if "mlx_export" not in config else "mlx-affine-int3-int4",
             "kv_format": "bf16",
             "max_context": config["max_position_embeddings"],
             "checkpoint_files": {
@@ -20,17 +20,19 @@ def validate(directory: Path, manifest_path: Path) -> dict:
                     "config.json",
                     "tokenizer.json",
                     "tokenizer_config.json",
-                    "special_tokens_map.json",
+                    *( ["special_tokens_map.json"] if (directory / "special_tokens_map.json").exists() or "mlx_export" in config else [] ),
                     "model.safetensors.index.json",
                     *index["weight_map"].values(),
                 }
             },
         }
-    formats = {"mlx-affine-int4": 4, "mlx-affine-int3-int4": 3}
+    formats = {"mlx-affine-oq3e": 3, "mlx-affine-int4": 4, "mlx-affine-int3-int4": 3}
     if manifest["weight_format"] not in formats or manifest["kv_format"] != "bf16":
         raise ValueError("This engine requires affine INT4 or mixed INT3/INT4 weights and BF16 KV")
     files = manifest["checkpoint_files"]
-    required = {"config.json", "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json"}
+    required = {"config.json", "tokenizer.json", "tokenizer_config.json"}
+    if manifest["weight_format"] != "mlx-affine-oq3e":
+        required.add("special_tokens_map.json")
     shards = {name for name in files if name.startswith("model-") and name.endswith(".safetensors")}
     if not required.issubset(files) or not shards:
         raise ValueError("Manifest must include configuration, tokenizer and weight shards")
@@ -45,6 +47,14 @@ def validate(directory: Path, manifest_path: Path) -> dict:
             raise ValueError(f"Checkpoint is missing a manifest file: {name}")
     if config["sliding_window"] != 513:
         raise ValueError("Flint requires sliding_window=513, including the current token")
+    if manifest["weight_format"] == "mlx-affine-oq3e":
+        q = config["quantization"]
+        if (q.get("bits"), q.get("group_size"), q.get("mode")) != (3, 64, "affine"):
+            raise ValueError("oQ3e requires group-64 affine 3-bit defaults")
+        for name, spec in q.items():
+            if isinstance(spec, dict) and (spec.get("bits") not in (3, 6, 8) or spec.get("group_size") not in (64, 128) or spec.get("mode", "affine") != "affine"):
+                raise ValueError(f"Unsupported oQ3e tensor quantization: {name}")
+        return manifest
     export = config["mlx_export"]
     expert_bits = formats[manifest["weight_format"]]
     if (export["bits"], export["routed_expert_bits"], export["embedding_bits"]) != (

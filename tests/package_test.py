@@ -46,7 +46,7 @@ with tempfile.TemporaryDirectory(prefix="rec-package-test-") as td:
     )
     descriptor = json.loads(output.with_name(output.name + ".manifest.json").read_text())
     low = json.loads(output.with_name(output.name + ".low-memory.manifest.json").read_text())
-    assert low["entry"] == "config.json" and low["context"] == 131072
+    assert low["entry"] == "config.json" and low["context"] == 262144
     assert low["runtime_sha256"] == descriptor["runtime_sha256"]
     assert low["runtime_files"] == descriptor["runtime_files"]
     assert {f["name"] for f in descriptor["runtime_files"]} == {
@@ -66,6 +66,10 @@ with tempfile.TemporaryDirectory(prefix="rec-package-test-") as td:
         result = subprocess.run([str(output), "doctor"], text=True, capture_output=True)
         # CI Macs may fail the hardware requirement after the profile is reported.
         assert re.search(r"Engine +mlx \(metal\)", result.stdout), result.stdout + result.stderr
+        for quant, revision in (("3/4", "flint-mixed-3-4bit"), ("oq3e", "flint-oq3e")):
+            selected = subprocess.run([str(output), "doctor", "--quant", quant], text=True, capture_output=True)
+            assert revision in selected.stdout, selected.stdout + selected.stderr
+            assert "262,144" in selected.stdout, selected.stdout + selected.stderr
         assert (
             subprocess.check_output([str(output), "--version"], text=True).strip()
             == "rec 0.1.0-test"

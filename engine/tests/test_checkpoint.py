@@ -87,6 +87,22 @@ class CheckpointTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     validate(directory, profile)
 
+    def test_oq3e_layout(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            config, profile = self.fixture(directory, 3)
+            config.pop("mlx_export")
+            config["quantization"] = {"group_size": 64, "bits": 3, "mode": "affine",
+                "language_model.model.layers.0.self_attn.q_proj": {"bits": 6, "group_size": 64},
+                "language_model.model.embed_tokens": {"bits": 8, "group_size": 64}}
+            config["quantization_config"] = config["quantization"]
+            profile.write_text(json.dumps(config))
+            (directory/"special_tokens_map.json").unlink()
+            self.assertEqual(validate(directory, profile)["weight_format"], "mlx-affine-oq3e")
+            config["quantization"]["language_model.model.embed_tokens"]["bits"] = 7
+            profile.write_text(json.dumps(config))
+            with self.assertRaises(ValueError): validate(directory, profile)
+
     def test_extra_shard_rejected(self):
         # An unindexed shard can indicate a stale or accidentally combined checkpoint.
         with tempfile.TemporaryDirectory() as temporary:
