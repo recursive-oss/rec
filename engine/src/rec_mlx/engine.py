@@ -62,7 +62,7 @@ class Engine:
         import mlx.core as mx
 
         device = mx.device_info()
-        native_decode = device["device_name"] == "Apple M2 Max"
+        native_decode = device["device_name"] in ("Apple M2 Max", "Apple M5 Ultra")
         profile = None if native_decode else profile_for_device(device)
         self.identity = validate(directory, manifest_path)
         config = json.loads((directory / "config.json").read_text())
@@ -112,7 +112,11 @@ class Engine:
             "load_peak_mlx_bytes": mx.get_peak_memory(),
             "process_peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
             "physical_memory_bytes": memory,
-            "device_profile": "M2 Max" if native_decode else profile.chip,
+            "device_profile": (
+                device["device_name"].removeprefix("Apple ")
+                if native_decode
+                else profile.chip
+            ),
             "decode_strategy": "native_mlx" if native_decode else "resident_sampling",
             "weight_format": self.identity["weight_format"],
             "kv_format": self.identity["kv_format"],

@@ -37,6 +37,10 @@ not supported on M2 Max. Measure throughput on your own machine with your
 actual workload; the M4 Pro results above do not establish M2 Max performance
 or imply the same speedup.
 
+M5 Ultra uses the standard MLX backend (native fallback), not the resident
+decode backend. The resident decoder currently produces incorrect results on
+the Ultra's dual-die GPU. No M4 Pro performance claim applies to M5 Ultra.
+
 
 ## Install
 
