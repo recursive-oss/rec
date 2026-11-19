@@ -69,10 +69,21 @@ class Engine:
         from .kernels import build_decoder
         from .quantized import QATModel
 
-        if self.identity["max_context"] != QATModel.context_limit:
+        model_type = QATModel
+        if self.identity["weight_format"] == "bf16":
+            if device["device_name"] != "Apple M5 Ultra":
+                raise RuntimeError("The BF16 Flint checkpoint requires an Apple M5 Ultra")
+            if memory < 256 * 1024**3:
+                raise RuntimeError("The BF16 Flint checkpoint requires 256 GiB of unified memory")
+            from .bf16 import BF16Model
+
+            model_type = BF16Model
+        if self.identity["max_context"] != model_type.context_limit:
             raise ValueError("Manifest context limit does not match the engine capacity")
-        if not 1 <= context_limit <= QATModel.context_limit:
-            raise ValueError(f"Context limit must be between 1 and {QATModel.context_limit} tokens")
+        if not 1 <= context_limit <= model_type.context_limit:
+            raise ValueError(
+                f"Context limit must be between 1 and {model_type.context_limit} tokens"
+            )
         self.context_limit = context_limit
         self._prompt_cache = None
         self._prefix_preparation = None
@@ -91,10 +102,12 @@ class Engine:
         if native_decode:
             from .native import NativeRuntime
 
-            self.runtime = NativeRuntime(QATModel(directory))
+            self.runtime = NativeRuntime(model_type(directory))
             self.resident_sampler = None
         else:
-            self.runtime, self.resident_sampler = build_decoder(QATModel(directory), optimized=True)
+            self.runtime, self.resident_sampler = build_decoder(
+                model_type(directory), optimized=True
+            )
         # Packing replaces native weights with lazy views. Materialize them on their creation
         # stream before HTTP threads use the native prefill model.
         mx.eval(self.runtime.model.native.parameters())

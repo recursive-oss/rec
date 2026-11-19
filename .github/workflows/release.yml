@@ -23,6 +23,9 @@ jobs:
           python3 packaging/package.py --runtime-dir .build/bundle-mlx --manifest packaging/flint-int4-mlx.json \
             --version "$version" --output dist/rec-darwin-arm64
           test "$(dist/rec-darwin-arm64 --version)" = "rec $version"
+          python3 packaging/package.py --runtime-dir .build/bundle-mlx --manifest packaging/flint-bf16-mlx.json \
+            --version "$version" --output dist/rec-darwin-arm64-bf16
+          test "$(dist/rec-darwin-arm64-bf16 --version)" = "rec $version"
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -38,4 +41,5 @@ jobs:
               ;;
           esac
           gh release create "$GITHUB_REF_NAME" "${notes[@]}" --verify-tag --generate-notes \
-            --title "rec $GITHUB_REF_NAME" dist/rec-darwin-arm64 dist/rec-darwin-arm64.meta
+            --title "rec $GITHUB_REF_NAME" dist/rec-darwin-arm64 dist/rec-darwin-arm64.meta \
+            dist/rec-darwin-arm64-bf16 dist/rec-darwin-arm64-bf16.meta

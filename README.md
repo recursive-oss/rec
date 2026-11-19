@@ -27,7 +27,7 @@ excluded.</sub></p>
 ## Requirements
 
 - Apple Silicon Mac with an M2 Max, M4 Pro, M4 Max, M5 Pro, M5 Max, or M5 Ultra
-- At least 48 GiB unified memory
+- At least 48 GiB unified memory for the standard INT4 build
 - About 30 GB free disk space
 - [Node.js 22](https://nodejs.org/en/download) and npm for pi
 
@@ -40,6 +40,10 @@ or imply the same speedup.
 M5 Ultra uses the standard MLX backend (native fallback), not the resident
 decode backend. The resident decoder currently produces incorrect results on
 the Ultra's dual-die GPU. No M4 Pro performance claim applies to M5 Ultra.
+
+For the original BF16 Flint checkpoint on an M5 Ultra with 256 GiB of unified
+memory, use the `rec-darwin-arm64-bf16` release binary. It downloads about 80
+GB of model files on first use and requires about 80 GB of free disk space.
 
 
 ## Install

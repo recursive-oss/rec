@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -199,6 +200,9 @@ func ensureModelWithClient(ctx context.Context, p Paths, m Manifest, out io.Writ
 		}
 	}
 	if len(missing) == 0 {
+		if err := writeModelProfile(root, m); err != nil {
+			return "", err
+		}
 		return filepath.Join(root, m.Entry), nil
 	}
 	progress := newTransfer(out, "Downloading "+name, "Downloaded "+name, total-need, total)
@@ -238,7 +242,36 @@ func ensureModelWithClient(ctx context.Context, p Paths, m Manifest, out io.Writ
 		base += f.Size
 	}
 	progress.succeed()
+	if err := writeModelProfile(root, m); err != nil {
+		return "", err
+	}
 	return filepath.Join(root, m.Entry), nil
+}
+
+func writeModelProfile(root string, m Manifest) error {
+	if m.WeightFormat == "" {
+		return nil
+	}
+	checkpointFiles := make(map[string]string, len(m.Files))
+	for _, file := range m.Files {
+		checkpointFiles[file.Name] = file.SHA256
+	}
+	profile := struct {
+		ModelID         string            `json:"model_id"`
+		WeightFormat    string            `json:"weight_format"`
+		KVFormat        string            `json:"kv_format"`
+		MinRAM          int64             `json:"min_ram_bytes"`
+		MaxContext      int               `json:"max_context"`
+		CheckpointFiles map[string]string `json:"checkpoint_files"`
+	}{m.ModelID, m.WeightFormat, m.KVFormat, m.MinRAM, m.MaxContext, checkpointFiles}
+	data, err := json.Marshal(profile)
+	if err != nil {
+		return fmt.Errorf("encode model profile: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, m.Entry), append(data, '\n'), 0o600); err != nil {
+		return fmt.Errorf("write model profile: %w", err)
+	}
+	return nil
 }
 
 func verifyModel(p Paths, m Manifest, out io.Writer) (string, error) {

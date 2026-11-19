@@ -1,4 +1,5 @@
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -332,12 +333,32 @@ class Model(nn.Module):
 
     def sanitize(self, weights: dict[str, Any]) -> dict[str, Any]:
         out = {}
+        experts = {}
         for key, value in weights.items():
+            expert = re.fullmatch(
+                r"model\.layers\.(\d+)\.mlp\.experts\.(\d+)\.(gate_proj|up_proj|down_proj)\.weight",
+                key,
+            )
+            if expert is not None:
+                layer, index, projection = expert.groups()
+                if int(index) >= self.args.num_experts:
+                    raise ValueError(f"BF16 Flint expert index is out of range: {key}")
+                bucket = experts.setdefault((layer, projection), [None] * self.args.num_experts)
+                if bucket[int(index)] is not None:
+                    raise ValueError(f"Duplicate BF16 Flint expert tensor: {key}")
+                bucket[int(index)] = value
+                continue
             if key.endswith(".self_attn.softmax_offset"):
                 value = value.astype(mx.float32)
             elif key.endswith(".weight") and value.dtype == mx.uint8:
                 value = value.view(mx.uint32)
             out[key] = value
+        for (layer, projection), values in experts.items():
+            if any(value is None for value in values):
+                raise ValueError(
+                    f"Incomplete BF16 Flint expert projection: layer {layer} {projection}"
+                )
+            out[f"model.layers.{layer}.mlp.switch_mlp.{projection}.weight"] = mx.stack(values)
         for index, layer in enumerate(self.model.layers):
             name = f"model.layers.{index}.mlp.gate.expert_bias"
             if isinstance(layer.mlp, SparseMoeBlock) and name not in out:

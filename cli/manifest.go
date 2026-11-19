@@ -42,6 +42,9 @@ type Manifest struct {
 	Context      int    `json:"context"`
 	MaxContext   int    `json:"max_context,omitempty"`
 	MinRAM       int64  `json:"min_ram_bytes"`
+	ModelID      string `json:"model_id,omitempty"`
+	WeightFormat string `json:"weight_format,omitempty"`
+	KVFormat     string `json:"kv_format,omitempty"`
 	Files        []File `json:"files"`
 	Entry        string `json:"entry"`
 	RuntimeSHA   string `json:"runtime_sha256"`
@@ -116,8 +119,14 @@ func decodeManifest(data []byte) (Manifest, error) {
 			found = true
 		}
 	}
-	if !found {
+	if !found && (m.WeightFormat == "" || !safeName(m.Entry)) {
 		return m, fmt.Errorf("entry must name a model file")
+	}
+	if m.WeightFormat != "" && (m.ModelID == "" || m.KVFormat == "") {
+		return m, fmt.Errorf("embedded model profiles require a model ID, weight format and KV format")
+	}
+	if m.WeightFormat != "" && (m.WeightFormat != "bf16" || m.KVFormat != "bf16" || m.MinRAM < 256*1024*1024*1024) {
+		return m, fmt.Errorf("BF16 Flint requires BF16 KV and at least 256 GiB of memory")
 	}
 	if !validHash(m.RuntimeSHA) || len(m.RuntimeFiles) == 0 {
 		return m, fmt.Errorf("missing embedded runtime descriptor")
