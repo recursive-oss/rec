@@ -365,7 +365,6 @@ func TestAppleChipAllowlist(t *testing.T) {
 		"Apple M2":       false,
 		"Apple M2 Pro":   false,
 		"Apple M2 Ultra": false,
-		"Apple M4 Max":   false,
 		"Apple M4":       false,
 		"Apple M1 Pro":   false,
 		"Apple M2 Max ":  false,
@@ -379,7 +378,7 @@ func TestAppleChipAllowlist(t *testing.T) {
 				t.Fatalf("%q: want supported=%t, got error %v", chip, ok, err)
 			}
 			if !ok {
-				want := fmt.Sprintf("Flint requires an Apple M2 Max, M4 Pro, M4 Max, M5 Pro or M5 Max; detected %s", chip)
+				want := fmt.Sprintf("Flint requires an Apple M2 Max, M4 Pro, M4 Max, M5 Pro, M5 Max or M5 Ultra; detected %s", chip)
 				if err.Error() != want {
 					t.Fatalf("error = %q, want %q", err.Error(), want)
 				}
