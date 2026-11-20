@@ -45,8 +45,13 @@ func uninstall(p Paths, args []string, in io.Reader, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	homebrew := installedWithHomebrew()
+	removes := "rec, its downloaded models"
+	if homebrew {
+		removes = "rec's downloaded models"
+	}
 	ui := newScreen(out)
-	ui.println("This removes rec, its downloaded models, its settings and its pi and OpenCode sessions:")
+	ui.println("This removes " + removes + ", its settings and its pi and OpenCode sessions:")
 	for _, link := range links {
 		ui.println("  " + link)
 	}
@@ -69,6 +74,11 @@ func uninstall(p Paths, args []string, in io.Reader, out io.Writer) error {
 	}
 	if err := os.RemoveAll(p.Data); err != nil {
 		return err
+	}
+	if homebrew {
+		ui.succeeded("Removed rec's models and settings", "")
+		ui.println(faintStyle.Render("Run brew uninstall rec to remove the rec command."))
+		return nil
 	}
 	ui.succeeded("Removed rec", "")
 	ui.println(faintStyle.Render("Your shell configuration still adds ~/.local/bin to PATH after \"# Recursive CLI PATH\"."))
@@ -96,6 +106,14 @@ func dirSize(dir string) (int64, error) {
 		return nil
 	})
 	return size, err
+}
+
+func stopOlderServer(p Paths, out io.Writer) error {
+	s, err := control(p, "status")
+	if err != nil || s.Version == Version {
+		return nil
+	}
+	return stopServer(p, out)
 }
 
 func stopServer(p Paths, out io.Writer) error {

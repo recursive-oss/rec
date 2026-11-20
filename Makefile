@@ -19,11 +19,12 @@ test-cli:
 	python3 tests/launch_client_test.py .build/rec $(CLIENTS)
 	python3 tests/installer_test.py
 	python3 tests/package_test.py
+	PYTHONPATH=common/src python3 -m unittest discover -s common/tests -v
 
 PYTHON_ROOT = $(shell uv python dir)/cpython-3.12.12-macos-aarch64-none
 
 test-engine:
-	cd engine && uv venv --allow-existing --python 3.12 && uv pip install '.[validation]'
+	cd engine && uv venv --allow-existing --python 3.12 && uv pip install ../common '.[validation]'
 	cd engine && .venv/bin/pytest -v -rs
 	uv python install 3.12.12
 	rm -rf .build/bundle-mlx .build/smoke

@@ -43,6 +43,14 @@ curl -fsSL https://raw.githubusercontent.com/recursive-oss/rec/main/install.sh |
 This installs `rec` in `~/.local/bin` and adds it to your PATH for new
 terminals. All other data lives under `~/.local/share/rec`.
 
+On macOS you can also install with our [Homebrew](https://brew.sh) formula:
+
+```bash
+brew tap recursive-oss/tap
+brew trust recursive-oss/tap
+brew install recursive-oss/tap/rec
+```
+
 
 ## Usage
 

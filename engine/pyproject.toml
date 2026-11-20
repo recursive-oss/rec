@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Flint inference engine for Apple Silicon"
 requires-python = ">=3.12"
 dependencies = [
+    "rec-common==0.1.0",
     "mlx==0.32.0",
     "mlx-lm==0.31.3",
     "transformers==5.16.1",

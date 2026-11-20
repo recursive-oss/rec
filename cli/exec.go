@@ -20,7 +20,7 @@ func execClient(p Paths, args []string) error {
 	}
 	rest := args[1:]
 	if args[0] == "opencode" && len(rest) > 0 && (rest[0] == "upgrade" || rest[0] == "uninstall") {
-		return fmt.Errorf("rec manages its OpenCode client; run rec update to update it")
+		return fmt.Errorf("rec manages its OpenCode client; run %s to update it", updateCommand())
 	}
 	client, err := installClient(p, args[0])
 	if err != nil {

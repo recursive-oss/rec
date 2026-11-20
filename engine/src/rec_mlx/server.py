@@ -8,13 +8,15 @@ import socket
 import threading
 from http.server import ThreadingHTTPServer
 
-from .anthropic import (
+from rec.common.anthropic import (
     ErrorTranslator,
     MessageEventStream,
     anthropic_error,
     chat_to_message,
     messages_to_chat,
 )
+from rec.common.serving import GRAMMAR
+
 from .engine import Sampling
 
 
@@ -28,7 +30,13 @@ class Server(ThreadingHTTPServer):
 
 
 def make_server(
-    engine, address, metrics_path, *, defaults=Sampling(), api_key=None, grammar_mode="flint"
+    engine,
+    address,
+    metrics_path,
+    *,
+    defaults=Sampling(),
+    api_key=None,
+    grammar_mode=GRAMMAR,
 ):
     from mlx_lm.server import APIHandler
 

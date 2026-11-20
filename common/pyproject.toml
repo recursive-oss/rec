@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rec-common"
+version = "0.1.0"
+description = "Code shared by the inference engines"
+requires-python = ">=3.12"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rec"]
+
+[tool.ruff]
+extend = "../ruff.toml"

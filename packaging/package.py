@@ -4,7 +4,6 @@
 import argparse
 import gzip
 import hashlib
-import io
 import json
 import os
 import re
@@ -15,20 +14,21 @@ import tempfile
 from pathlib import Path
 
 
-def sha(data):
-    return hashlib.sha256(data).hexdigest()
+def file_sha(path):
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def payload(runtime_dir, manifest):
+def payload(runtime_dir, manifest, archive):
     m = json.loads(manifest.read_text())
     metadata = json.loads((runtime_dir / "build.json").read_text())
     for key in ("engine", "os", "arch", "backend"):
         if metadata[key] != m[key]:
             raise ValueError(f"runtime and model disagree on {key}")
     files = []
-    buf = io.BytesIO()
+    raw = archive.open("wb")
     # Fixed gzip timestamp makes equivalent payloads content-identical.
-    compressed = gzip.GzipFile(fileobj=buf, mode="wb", mtime=0)
+    compressed = gzip.GzipFile(fileobj=raw, mode="wb", mtime=0, filename="")
     with tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as tar:
         for source in sorted(runtime_dir.rglob("*")):
             if source.is_symlink():
@@ -37,18 +37,22 @@ def payload(runtime_dir, manifest):
                 continue
             if not source.is_file():
                 raise ValueError(f"runtime payload must contain regular files: {source}")
-            data = source.read_bytes()
+            size = source.stat().st_size
+            with source.open("rb") as stream:
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
             executable = bool(source.stat().st_mode & 0o111)
             name = source.relative_to(runtime_dir).as_posix()
-            files.append(dict(name=name, size=len(data), sha256=sha(data), executable=executable))
+            files.append(dict(name=name, size=size, sha256=digest, executable=executable))
             info = tarfile.TarInfo(name)
-            info.size = len(data)
+            info.size = size
             info.mode = 0o700 if executable else 0o600
-            tar.addfile(info, io.BytesIO(data))
+            with source.open("rb") as stream:
+                tar.addfile(info, stream)
     compressed.close()
+    raw.close()
     m["runtime_files"] = files
-    m["runtime_sha256"] = sha(buf.getvalue())
-    return m, buf.getvalue()
+    m["runtime_sha256"] = file_sha(archive)
+    return m
 
 
 def main():
@@ -74,15 +78,16 @@ def main():
     a = p.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", a.version):
         p.error("invalid version")
-    try:
-        m, archive = payload(a.runtime_dir, a.manifest)
-    except ValueError as error:
-        p.error(str(error))
     root = Path(__file__).resolve().parents[1]
     output = a.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="rec-package-") as td:
         build = Path(td)
+        archive = build / "runtime.tar.gz"
+        try:
+            m = payload(a.runtime_dir, a.manifest, archive)
+        except ValueError as error:
+            p.error(str(error))
         shutil.copy2(root / "go.mod", build / "go.mod")
         shutil.copy2(root / "go.sum", build / "go.sum")
         shutil.copytree(root / "cli", build / "cli")
@@ -90,7 +95,7 @@ def main():
         shutil.rmtree(assets)
         assets.mkdir()
         (assets / "manifest.json").write_text(json.dumps(m, indent=2) + "\n")
-        (assets / "runtime.tar.gz").write_bytes(archive)
+        shutil.copy2(archive, assets / "runtime.tar.gz")
         subprocess.run(
             ["go", "test", "./cli", "-run", "TestEmbeddedManifest"], cwd=build, check=True
         )
@@ -113,8 +118,9 @@ def main():
         )
         shutil.copy2(staged, output)
     output.chmod(0o755)
-    data = output.read_bytes()
-    output.with_name(output.name + ".meta").write_text(f"{sha(data)} {len(data)}\n")
+    output.with_name(output.name + ".meta").write_text(
+        f"{file_sha(output)} {output.stat().st_size}\n"
+    )
     output.with_name(output.name + ".manifest.json").write_text(json.dumps(m, indent=2) + "\n")
     print(output)
 

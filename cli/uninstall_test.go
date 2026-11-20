@@ -90,6 +90,21 @@ func TestUninstallKeepsOtherPrograms(t *testing.T) {
 	}
 }
 
+func TestUninstallLeavesHomebrewCommandToBrew(t *testing.T) {
+	_, p := installedHome(t)
+	installWithHomebrew(t)
+	var out bytes.Buffer
+	if err := uninstall(p, []string{"-y"}, strings.NewReader(""), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "brew uninstall rec") || strings.Contains(out.String(), "Recursive CLI PATH") {
+		t.Fatalf("output:\n%s", out.String())
+	}
+	if _, err := os.Stat(p.Data); !os.IsNotExist(err) {
+		t.Fatal("data was not removed")
+	}
+}
+
 func TestUninstallStopsRunningServer(t *testing.T) {
 	_, p := installedHome(t)
 	l, err := lock(filepath.Join(p.State, "instance.lock"))

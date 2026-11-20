@@ -9,7 +9,11 @@ import threading
 from dataclasses import asdict
 from pathlib import Path
 
-from .engine import ContextLimitError, Engine, Sampling
+from rec.common.serving import ENFORCE_TOOL_SCHEMAS, GRAMMAR, Sampling
+
+from .engine import ContextLimitError, Engine
+
+DEFAULTS = Sampling()
 
 
 def main():
@@ -38,12 +42,13 @@ def main():
     parser.add_argument(
         "--grammar",
         choices=("none", "flint"),
-        default="flint",
+        default=GRAMMAR,
         help="constrain assistant turns to each request's tool schemas (default: %(default)s)",
     )
     parser.add_argument(
         "--enforce-tool-schemas",
         action="store_true",
+        default=ENFORCE_TOOL_SCHEMAS,
         help="with Flint grammar, also constrain strict:false tool arguments",
     )
     parser.add_argument(
@@ -57,22 +62,25 @@ def main():
     parser.add_argument(
         "--temperature",
         type=float,
-        default=1.0,
+        default=DEFAULTS.temperature,
         help="default sampling temperature (default: %(default)s)",
     )
     parser.add_argument(
         "--top-p",
         type=float,
-        default=0.95,
+        default=DEFAULTS.top_p,
         help="default nucleus sampling threshold (default: %(default)s)",
     )
     parser.add_argument(
-        "--top-k", type=int, default=20, help="default top-k sampling limit (default: %(default)s)"
+        "--top-k",
+        type=int,
+        default=DEFAULTS.top_k,
+        help="default top-k sampling limit (default: %(default)s)",
     )
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=1024,
+        default=DEFAULTS.max_tokens,
         help="chat output limit; HTTP uses the request limit or the remaining context (default: %(default)s)",
     )
     parser.add_argument(
@@ -149,7 +157,7 @@ def main():
     chat(engine, settings, args.metrics, grammar_mode=args.grammar)
 
 
-def chat(engine, settings, metrics_path, *, grammar_mode="flint"):
+def chat(engine, settings, metrics_path, *, grammar_mode=GRAMMAR):
     constraint = engine.constraints.tools() if grammar_mode == "flint" else None
     messages = []
     while True:

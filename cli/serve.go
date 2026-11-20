@@ -211,6 +211,9 @@ func probe(ctx context.Context, base, key, model string, phase ...func(string)) 
 }
 
 func serve(parent context.Context, p Paths, m Manifest, override string, port int, out io.Writer, background ...bool) error {
+	if e := stopOlderServer(p, out); e != nil {
+		return e
+	}
 	l, e := lock(filepath.Join(p.State, "instance.lock"))
 	if e != nil {
 		if s, err := control(p, "status"); err == nil {

@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -30,10 +32,13 @@ func verifyRuntime(dir string, m Manifest) error {
 }
 
 func unpack(data []byte, dir string, m Manifest) error {
-	if digest(data) != m.RuntimeSHA {
-		return fmt.Errorf("runtime archive SHA-256 mismatch")
-	}
-	gz, err := gzip.NewReader(bytes.NewReader(data))
+	return unpackStream(bytes.NewReader(data), dir, m)
+}
+
+func unpackStream(data io.Reader, dir string, m Manifest) error {
+	hash := sha256.New()
+	compressed := io.TeeReader(data, hash)
+	gz, err := gzip.NewReader(compressed)
 	if err != nil {
 		return err
 	}
@@ -77,6 +82,16 @@ func unpack(data []byte, dir string, m Manifest) error {
 			return ce
 		}
 	}
+	// Finish gzip validation and hash every compressed byte before publication.
+	if _, err := io.Copy(io.Discard, gz); err != nil {
+		return err
+	}
+	if _, err := io.Copy(io.Discard, compressed); err != nil {
+		return err
+	}
+	if hex.EncodeToString(hash.Sum(nil)) != m.RuntimeSHA {
+		return fmt.Errorf("runtime archive SHA-256 mismatch")
+	}
 	return verifyRuntime(dir, m)
 }
 
@@ -104,10 +119,11 @@ func ensureRuntime(p Paths, m Manifest, override string) (string, error) {
 	if _, err := os.Lstat(dir); err == nil {
 		return "", fmt.Errorf("cached runtime is corrupt; remove %s and retry", dir)
 	}
-	data, err := assets.ReadFile("assets/runtime.tar.gz")
+	data, err := runtimeArchive()
 	if err != nil {
-		return "", fmt.Errorf("no embedded runtime; use packaging/package.py")
+		return "", err
 	}
+	defer data.Close()
 	var size int64
 	for _, f := range m.RuntimeFiles {
 		size += f.Size
@@ -120,8 +136,16 @@ func ensureRuntime(p Paths, m Manifest, override string) (string, error) {
 		return "", err
 	}
 	defer os.RemoveAll(tmp)
-	if err := unpack(data, tmp, m); err != nil {
+	if err := unpackStream(data, tmp, m); err != nil {
 		return "", err
 	}
 	return dir, os.Rename(tmp, dir)
+}
+
+func runtimeArchive() (io.ReadCloser, error) {
+	data, err := assets.Open("assets/runtime.tar.gz")
+	if err != nil {
+		return nil, fmt.Errorf("no embedded runtime; use packaging/package.py: %w", err)
+	}
+	return data, nil
 }

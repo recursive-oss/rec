@@ -52,6 +52,28 @@ brew install go node uv
    requirements.
 5. Run `make test`.
 
+## Quality standards and evaluation
+
+The below standards are required for PRs intended for merge. Feel free to share
+draft PRs that may not 100% fit the requirements;
+please state clearly in the description that they are exploratory and not
+intended for merge.
+
+To be merged, contributions should meet a high standard of correctness, simplicity,
+and maintainability. Please follow the existing architecture and coding style,
+and keep added complexity to a minimum in terms of lines of code, files affected, and
+conceptual complexity added.
+
+AI tools are fine to use but you remain responsible for every line you submit.
+Please review, understand, and test the full change, and be ready to explain
+your choices.
+
+Changes that could degrade performance require exhaustive evaluations. Include
+reproducible before-and-after results across affected workloads and supported
+hardware, covering latency, throughput, memory use, and output quality where
+relevant. Please share the test setup and commands, and explain any regressions
+or tradeoffs.
+
 ## Open a pull request
 
 - Use a short, clear title.
@@ -59,8 +81,11 @@ brew install go node uv
 - Tell us how you tested the change.
 - Keep the pull request small enough to review.
 
-A maintainer will review your pull request. We may ask for changes. We can decline
-a change that does not fit the project's scope or that we cannot support.
+We'll do our best to respond, but cannot guarantee a thorough review or a
+timeline, especially for contributions that do not meet these requirements.
+Review depends on maintainer availability and project priorities. A merge is not
+guaranteed, and we may close PRs that fall outside the project's scope or
+maintenance capacity.
 
 ## License
 

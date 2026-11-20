@@ -29,6 +29,14 @@ func TestExecRejectsBeforeInstallingClient(t *testing.T) {
 	}
 }
 
+func TestExecPointsHomebrewInstallToBrew(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	installWithHomebrew(t)
+	if err := execClient(dataPaths(t.TempDir()), []string{"opencode", "upgrade"}); err == nil || !strings.Contains(err.Error(), "brew upgrade rec") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestClientUserDirIsPrivate(t *testing.T) {
 	p := dataPaths(t.TempDir())
 	dir, err := clientUserDir(p, "pi")

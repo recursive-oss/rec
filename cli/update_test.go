@@ -99,3 +99,41 @@ func TestDoctorSurvivesFailedReleaseLookup(t *testing.T) {
 		t.Fatalf("summary = %q", got)
 	}
 }
+
+func installWithHomebrew(t *testing.T) {
+	prefix := t.TempDir()
+	cellar := filepath.Join(prefix, "Cellar/rec/0.2.0/bin")
+	for _, dir := range []string{cellar, filepath.Join(prefix, "bin")} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(cellar, "rec"), []byte("rec"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../Cellar/rec/0.2.0/bin/rec", filepath.Join(prefix, "bin/rec")); err != nil {
+		t.Fatal(err)
+	}
+	previous := executable
+	executable = func() (string, error) { return filepath.Join(prefix, "bin/rec"), nil }
+	t.Cleanup(func() { executable = previous })
+}
+
+func TestUpdateLeavesHomebrewInstallToBrew(t *testing.T) {
+	dir := fakeReleases(t)
+	setVersion(t, "0.2.0")
+	installWithHomebrew(t)
+	var out bytes.Buffer
+	if err := update([]string{"-y"}, strings.NewReader(""), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "rec 0.3.0 is available") || !strings.Contains(out.String(), "brew upgrade rec") {
+		t.Fatalf("output:\n%s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "installed")); !os.IsNotExist(err) {
+		t.Fatal("ran the installer for a Homebrew install")
+	}
+	if got := updateSummary(); !strings.Contains(got, "run brew upgrade rec") {
+		t.Fatalf("summary = %q", got)
+	}
+}
