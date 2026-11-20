@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -39,6 +40,10 @@ func update(args []string, in io.Reader, out io.Writer) error {
 		return nil
 	}
 	ui.println("rec " + latest + " is available. This is rec " + Version + ".")
+	if installedWithHomebrew() {
+		ui.println("Homebrew installed this rec. Run " + boldStyle.Render("brew upgrade rec") + " to update it.")
+		return nil
+	}
 	if !*yes {
 		_, _ = fmt.Fprint(ui.out, boldStyle.Render("Install rec "+latest+"?")+faintStyle.Render(" [y/N] "))
 		answer, _ := bufio.NewReader(in).ReadString('\n')
@@ -69,7 +74,27 @@ func updateSummary() string {
 	if latest == Version {
 		return ""
 	}
-	return warningStyle.Render("rec "+latest+" is available") + faintStyle.Render(" · run rec update")
+	return warningStyle.Render("rec "+latest+" is available") + faintStyle.Render(" · run "+updateCommand())
+}
+
+var executable = os.Executable
+
+func installedWithHomebrew() bool {
+	self, err := executable()
+	if err != nil {
+		return false
+	}
+	if resolved, err := filepath.EvalSymlinks(self); err == nil {
+		self = resolved
+	}
+	return strings.Contains(self, "/Cellar/rec/")
+}
+
+func updateCommand() string {
+	if installedWithHomebrew() {
+		return "brew upgrade rec"
+	}
+	return "rec update"
 }
 
 var (

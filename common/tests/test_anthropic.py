@@ -2,7 +2,7 @@ import io
 import json
 import unittest
 
-from rec_mlx.anthropic import (
+from rec.common.anthropic import (
     ErrorTranslator,
     MessageEventStream,
     chat_to_message,

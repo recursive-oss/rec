@@ -183,6 +183,9 @@ func launchReady(ctx context.Context, p Paths, out io.Writer) (Status, error) {
 		return Status{}, fmt.Errorf("another launcher is starting Flint; retry when it is ready")
 	}
 	defer unlock(l)
+	if err := stopOlderServer(p, out); err != nil {
+		return Status{}, err
+	}
 	s, err := control(p, "status")
 	if err == nil && s.Model != "flint" {
 		return s, fmt.Errorf("running model is %q, expected flint; use rec stop first", s.Model)

@@ -44,15 +44,12 @@ rec_install() (
   mkdir "$lock_dir" 2>/dev/null || fail "another install is active; if interrupted, remove $lock_dir"
   tmp=$(mktemp -d "$data/.install.XXXXXX")
   trap 'rm -rf "$tmp"; rmdir "$lock_dir" 2>/dev/null || true' EXIT
-  existing=$(command -v rec || true)
   if [ -e "$bin/rec" ] || [ -L "$bin/rec" ]; then
     [ -L "$bin/rec" ] || fail "$bin/rec exists and is not a managed symlink"
     old=$(readlink "$bin/rec")
     case "$old" in "$data"/releases/*/rec) [ -f "$(dirname "$old")/.managed" ] || fail 'existing rec is not managed';; *) fail 'existing rec belongs to another program';; esac
-    [ -z "$existing" ] || [ "$existing" = "$bin/rec" ] || fail "rec already resolves to $existing"
   else
     old=''
-    [ -z "$existing" ] || fail "rec already resolves to $existing"
   fi
   printf '%sInstalling rec%s\n\n' "$bold" "$reset"
   begin "Downloading rec ${version:-(latest release)}"
@@ -115,6 +112,10 @@ rec_install() (
     *) shell_note='Add ~/.local/bin to PATH in your shell configuration.';;
   esac
   done_step "Installed rec $version in ~/.local/bin"
+  existing=$(command -v rec || true)
+  if [ -n "$existing" ] && [ "$existing" != "$bin/rec" ]; then
+    printf 'rec install: warning: rec resolves to %s; run "%s" directly or put ~/.local/bin first in PATH\n' "$existing" "$bin/rec" >&2
+  fi
   printf '\n%sGet started%s\n' "$bold" "$reset"
   printf '  %s%-21s%s %s\n' \
     "$blue" 'rec launch pi' "$reset" 'Chat with Flint in pi' \

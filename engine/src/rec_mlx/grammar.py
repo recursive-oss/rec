@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import mlx.core as mx
 import numpy as np
 import xgrammar as xgr
+from rec.common.serving import ENFORCE_TOOL_SCHEMAS
 
 from . import _grammar_native as native
 from .grammar_builder import build_flint_glm_grammar
@@ -22,7 +23,7 @@ class Constraint:
 
 
 class ConstraintCompiler:
-    def __init__(self, tokenizer, *, enforce_tool_schemas=False):
+    def __init__(self, tokenizer, *, enforce_tool_schemas=ENFORCE_TOOL_SCHEMAS):
         self.tokenizer = tokenizer
         self.enforce_tool_schemas = enforce_tool_schemas
         info = xgr.TokenizerInfo.from_huggingface(

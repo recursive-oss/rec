@@ -1,5 +1,6 @@
 from typing import Any
 
+from rec.common.serving import ENFORCE_TOOL_SCHEMAS
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from xgrammar.builtin_structural_tag import get_model_structural_tag
 from xgrammar.openai_tool_call_schema import FunctionToolParam
@@ -38,7 +39,7 @@ def build_flint_glm_grammar(
     tokenizer: PreTrainedTokenizerBase,
     tools: list[dict[str, Any]] | None = None,
     *,
-    enforce_tool_schemas: bool = False,
+    enforce_tool_schemas: bool = ENFORCE_TOOL_SCHEMAS,
 ) -> StructuralTag:
     ids = {
         marker: _token_id(tokenizer, marker) for marker in (*_STOP_MARKERS, "<think>", "</think>")

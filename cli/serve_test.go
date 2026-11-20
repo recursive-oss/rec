@@ -118,6 +118,23 @@ func TestServeLifecycle(t *testing.T) {
 	if err := serve(context.Background(), p, m, runtimeDir, port, &again); err != nil || !strings.Contains(again.String(), "test is already running") {
 		t.Fatalf("identical run did not reuse the server: %v %s", err, again.String())
 	}
+	setVersion(t, "0.2.0")
+	var upgraded lockedBuffer
+	go func() { done <- serve(context.Background(), p, m, runtimeDir, port, &upgraded) }()
+	for s.Version != "0.2.0" || !s.Ready {
+		if time.Now().After(deadline) {
+			t.Fatalf("a newer rec did not replace the running server:\n%s", upgraded.String())
+		}
+		time.Sleep(100 * time.Millisecond)
+		s, _ = control(p, "status")
+	}
+	if !strings.Contains(upgraded.String(), "Stopping the running model") {
+		t.Fatalf("output:\n%s", upgraded.String())
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("the older server: %v", err)
+	}
+
 	changed := m
 	changed.Context, changed.MaxContext = 4096, 4096
 	if err := serve(context.Background(), p, changed, runtimeDir, port, io.Discard); err == nil {

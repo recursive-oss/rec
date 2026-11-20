@@ -150,11 +150,12 @@ func TestEmbeddedManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := assets.ReadFile("assets/runtime.tar.gz")
+	data, err := assets.Open("assets/runtime.tar.gz")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := unpack(data, t.TempDir(), m); err != nil {
+	defer data.Close()
+	if err := unpackStream(data, t.TempDir(), m); err != nil {
 		t.Fatal(err)
 	}
 }

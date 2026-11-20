@@ -46,20 +46,22 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=args.output.parent, prefix=".mlx-build-") as td:
         wheels = Path(td) / "wheels"
-        subprocess.run(
-            [
-                args.uv,
-                "build",
-                "--wheel",
-                "--python",
-                str(source_python),
-                "--out-dir",
-                str(wheels),
-                str(ENGINE),
-            ],
-            check=True,
-        )
+        for package in (ENGINE.parent / "common", ENGINE):
+            subprocess.run(
+                [
+                    args.uv,
+                    "build",
+                    "--wheel",
+                    "--python",
+                    str(source_python),
+                    "--out-dir",
+                    str(wheels),
+                    str(package),
+                ],
+                check=True,
+            )
         (wheel,) = wheels.glob("rec_mlx-*.whl")
+        (common_wheel,) = wheels.glob("rec_common-*.whl")
         stage = Path(td) / "runtime"
         stage.mkdir()
         # Dereference the distribution's internal links; rec never extracts symlinks.
@@ -81,6 +83,7 @@ def main():
                 "--only-binary",
                 ":all:",
                 str(wheel),
+                str(common_wheel),
             ],
             check=True,
         )
