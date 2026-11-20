@@ -39,7 +39,8 @@ def main():
     if not 256 <= context <= maximum:
         parser.error(f"context must be between 256 and {maximum}")
     files = []
-    if args.profile.name in profile["checkpoint_files"]:
+    embedded_profile = profile.get("embedded_profile", False)
+    if not embedded_profile and args.profile.name in profile["checkpoint_files"]:
         parser.error("profile basename collides with a model file")
     for name, expected in profile["checkpoint_files"].items():
         if Path(name).name != name:
@@ -57,35 +58,37 @@ def main():
                 sha256=digest,
             )
         )
-    files.append(
-        dict(
-            name=args.profile.name,
-            url=args.base_url.rstrip("/") + "/" + quote(args.profile.name),
-            size=args.profile.stat().st_size,
-            sha256=hashlib.sha256(args.profile.read_bytes()).hexdigest(),
-        )
+    manifest = dict(
+        schema=1,
+        model="flint",
+        revision=profile["model_id"],
+        development=False,
+        engine="mlx",
+        os="darwin",
+        arch="arm64",
+        backend="metal",
+        context=context,
+        max_context=maximum,
+        min_ram_bytes=profile.get("min_ram_bytes", 48 * 1024**3),
+        entry=profile.get("entry", args.profile.name),
+        files=files,
     )
-    args.output.write_text(
-        json.dumps(
+    if embedded_profile:
+        manifest.update(
+            model_id=profile["model_id"],
+            weight_format=profile["weight_format"],
+            kv_format=profile["kv_format"],
+        )
+    else:
+        files.append(
             dict(
-                schema=1,
-                model="flint",
-                revision=profile["model_id"],
-                development=False,
-                engine="mlx",
-                os="darwin",
-                arch="arm64",
-                backend="metal",
-                context=context,
-                max_context=maximum,
-                min_ram_bytes=48 * 1024**3,
-                entry=args.profile.name,
-                files=files,
-            ),
-            indent=2,
+                name=args.profile.name,
+                url=args.base_url.rstrip("/") + "/" + quote(args.profile.name),
+                size=args.profile.stat().st_size,
+                sha256=hashlib.sha256(args.profile.read_bytes()).hexdigest(),
+            )
         )
-        + "\n"
-    )
+    args.output.write_text(json.dumps(manifest, indent=2) + "\n")
 
 
 if __name__ == "__main__":

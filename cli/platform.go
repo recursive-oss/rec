@@ -39,5 +39,8 @@ func preflight(m Manifest) error {
 	if err != nil {
 		return err
 	}
+	if m.WeightFormat == "bf16" && chip != "Apple M5 Ultra" {
+		return fmt.Errorf("the BF16 Flint checkpoint requires an Apple M5 Ultra; detected %s", chip)
+	}
 	return checkAppleChip(chip)
 }

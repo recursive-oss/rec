@@ -38,16 +38,28 @@ class Engine:
         import mlx.core as mx
 
         device = mx.device_info()
-        profile = profile_for_device(device)
+        native_decode = device["device_name"] in ("Apple M2 Max", "Apple M5 Ultra")
+        profile = None if native_decode else profile_for_device(device)
         self.identity = validate(directory, manifest_path)
         config = json.loads((directory / "config.json").read_text())
         from .kernels import build_decoder
         from .quantized import QATModel
 
-        if self.identity["max_context"] != QATModel.context_limit:
+        model_type = QATModel
+        if self.identity["weight_format"] == "bf16":
+            if device["device_name"] != "Apple M5 Ultra":
+                raise RuntimeError("The BF16 Flint checkpoint requires an Apple M5 Ultra")
+            if memory < 256 * 1024**3:
+                raise RuntimeError("The BF16 Flint checkpoint requires 256 GiB of unified memory")
+            from .bf16 import BF16Model
+
+            model_type = BF16Model
+        if self.identity["max_context"] != model_type.context_limit:
             raise ValueError("Manifest context limit does not match the engine capacity")
-        if not 1 <= context_limit <= QATModel.context_limit:
-            raise ValueError(f"Context limit must be between 1 and {QATModel.context_limit} tokens")
+        if not 1 <= context_limit <= model_type.context_limit:
+            raise ValueError(
+                f"Context limit must be between 1 and {model_type.context_limit} tokens"
+            )
         self.context_limit = context_limit
         self._prompt_cache = None
         self._prefix_preparation = None
@@ -63,7 +75,15 @@ class Engine:
         mx.set_cache_limit(0)
         mx.clear_cache()
         mx.reset_peak_memory()
-        self.runtime, self.resident_sampler = build_decoder(QATModel(directory), optimized=True)
+        if native_decode:
+            from .native import NativeRuntime
+
+            self.runtime = NativeRuntime(model_type(directory))
+            self.resident_sampler = None
+        else:
+            self.runtime, self.resident_sampler = build_decoder(
+                model_type(directory), optimized=True
+            )
         # Packing replaces native weights with lazy views. Materialize them on their creation
         # stream before HTTP threads use the native prefill model.
         mx.eval(self.runtime.model.native.parameters())
@@ -81,7 +101,12 @@ class Engine:
             "load_peak_mlx_bytes": mx.get_peak_memory(),
             "process_peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
             "physical_memory_bytes": memory,
-            "device_profile": profile.chip,
+            "device_profile": (
+                device["device_name"].removeprefix("Apple ")
+                if native_decode
+                else profile.chip
+            ),
+            "decode_strategy": "native_mlx" if native_decode else "resident_sampling",
             "weight_format": self.identity["weight_format"],
             "kv_format": self.identity["kv_format"],
         }
@@ -258,8 +283,12 @@ class Engine:
                 if should_stop():
                     reason = "stop"
                     break
+                native_decode = self.resident_sampler is None
                 if index:
-                    if not packet:
+                    if native_decode:
+                        logits = session.forward_token(generated[-1])
+                        mx.eval(logits)
+                    elif not packet:
                         count = min(8, sampling.max_tokens - index)
                         options = {"logprobs": token_logprobs} if return_logprobs else {}
                         packet = self.resident_sampler.block(
@@ -275,8 +304,38 @@ class Engine:
                             **options,
                         )
                         computed_tokens += len(packet)
-                    token = packet.pop(0)
-                else:
+                    if not native_decode:
+                        token = packet.pop(0)
+                if native_decode:
+                    if not bool(mx.all(mx.isfinite(logits)).item()):
+                        raise FloatingPointError("The inference engine produced nonfinite logits")
+                    flat = logits.reshape(-1).astype(mx.float32)
+                    if grammar is not None:
+                        flat = grammar.step_logits(flat, session._state)
+                    if sampling.presence_penalty and generated:
+                        flat = flat - sampling.presence_penalty * session._state["presence_mask"]
+                    if sampling.temperature == 0:
+                        token = int(mx.argmax(flat).item())
+                    elif unfiltered_t1 and index == 0:
+                        token = int(
+                            mx.random.categorical(flat, key=mx.random.key(sampling.seed)).item()
+                        )
+                    elif unfiltered_t1:
+                        noise = mx.random.gumbel(
+                            flat.shape, key=mx.random.key(sampling.seed + index)
+                        )
+                        token = int(mx.argmax(flat / sampling.temperature + noise).item())
+                    else:
+                        token = int(sampler(flat - mx.logsumexp(flat)).item())
+                    if return_logprobs:
+                        report = flat / sampling.temperature if sampling.temperature else flat
+                        token_logprobs.append(float((report[token] - mx.logsumexp(report)).item()))
+                    if grammar is not None:
+                        grammar.accept_first(token, session._state)
+                    if sampling.presence_penalty:
+                        session._state["presence_mask"][token] = 1.0
+                    computed_tokens += 1
+                elif index == 0:
                     if not bool(mx.all(mx.isfinite(logits)).item()):
                         raise FloatingPointError("The inference engine produced nonfinite logits")
                     flat = logits.reshape(-1).astype(mx.float32)
@@ -361,7 +420,9 @@ class Engine:
                     "peak_mlx_bytes": mx.get_peak_memory(),
                     "process_peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
                     "computed_tokens": computed_tokens,
-                    "decode_strategy": "resident_sampling",
+                    "decode_strategy": (
+                        "native_mlx" if self.resident_sampler is None else "resident_sampling"
+                    ),
                     **(grammar.metrics() if grammar is not None else {}),
                 },
             }
