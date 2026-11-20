@@ -111,6 +111,86 @@ class GrammarTests(unittest.TestCase):
                 token = tokens[-1]
             self.assertEqual(actual, ids)
             self.assertEqual(session.accepted, len(ids))
+        self.check_step_fixture(constraint, ids)
+
+    def check_step_fixture(self, constraint, ids):
+        reference = xgr.GrammarMatcher(constraint.compiled)
+        bitmask = xgr.allocate_token_bitmask(1, VOCAB)
+        state = {}
+        with constraint.session() as session:
+            initial = np.array(session.first_logits(mx.zeros(VOCAB)))
+            for index, token in enumerate(ids):
+                reference.fill_next_token_bitmask(bitmask)
+                bits = bitmask.numpy().view(np.uint32).reshape(-1)
+                allowed = np.unpackbits(bits.view(np.uint8), bitorder="little").astype(bool)
+                self.assertTrue(allowed[token])
+                invalid = int(np.flatnonzero(~allowed)[0])
+                logits = mx.full(VOCAB, -20.0)
+                logits[token] = 30.0
+                logits[invalid] = 50.0
+                masked = session.step_logits(logits, state)
+                np.testing.assert_array_equal(
+                    np.array(masked), np.where(allowed, np.array(logits), -np.inf)
+                )
+                self.assertEqual(int(mx.argmax(masked).item()), token)
+                if index == 0:
+                    self.assertNotIn("grammar_mask", state)
+                self.assertTrue(reference.accept_token(token))
+                session.accept_first(token, state)
+                self.assertEqual(session.accepted, index + 1)
+            self.assertTrue(session.stopped)
+            np.testing.assert_array_equal(np.array(session.first_logits(mx.zeros(VOCAB))), initial)
+            # A stopped session is unconstrained and ignores further accepts.
+            logits = mx.arange(VOCAB, dtype=mx.float32)
+            np.testing.assert_array_equal(
+                np.array(session.step_logits(logits, state)), np.array(logits)
+            )
+            fills = len(session.mask_seconds)
+            session.accept_first(-1, state)
+            self.assertEqual(session.accepted, len(ids))
+            self.assertEqual(len(session.mask_seconds), fills)
+            np.testing.assert_array_equal(
+                np.array(session.step_logits(logits, state)), np.array(logits)
+            )
+
+    def test_step_logits_tracks_each_token_and_stop(self):
+        ids = self.tokenizer.encode("abc", add_special_tokens=False)
+        ids.append(self.tokenizer.eos_token_id)
+        self.check_step_fixture(self.ebnf('root ::= "abc"\n'), ids)
+
+    def test_step_logits_rejects_illegal_token_without_advancing(self):
+        constraint = self.ebnf('root ::= "ab"\n')
+        a, b = self.tokenizer.encode("ab", add_special_tokens=False)
+        state = {}
+        reference = xgr.GrammarMatcher(constraint.compiled)
+        bitmask = xgr.allocate_token_bitmask(1, VOCAB)
+        with constraint.session() as session:
+            for invalid, valid in ((b, a), (a, b), (a, self.tokenizer.eos_token_id)):
+                mask = state.get("grammar_mask")
+                accepted = session.accepted
+                fills = len(session.mask_seconds)
+                self.assertFalse(reference.accept_token(invalid))
+                with self.assertRaisesRegex(
+                    RuntimeError, f"Grammar rejected sampled token {invalid}"
+                ):
+                    session.accept_first(invalid, state)
+                self.assertIs(state.get("grammar_mask"), mask)
+                self.assertEqual(session.accepted, accepted)
+                self.assertEqual(len(session.mask_seconds), fills)
+                self.assertFalse(session.stopped)
+                reference.fill_next_token_bitmask(bitmask)
+                allowed = (
+                    np.unpackbits(bitmask.numpy().view(np.uint8), bitorder="little")
+                    .reshape(-1)
+                    .astype(bool)
+                )
+                np.testing.assert_array_equal(
+                    np.isfinite(np.array(session.step_logits(mx.zeros(VOCAB), state))), allowed
+                )
+                self.assertTrue(reference.accept_token(valid))
+                session.accept_first(valid, state)
+            self.assertTrue(session.stopped)
+            self.assertEqual(session.accepted, 3)
 
     def test_recursive_json_with_split_utf8_and_escapes(self):
         import json
