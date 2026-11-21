@@ -29,7 +29,7 @@ def build_decoder(model, *, optimized):
 
         install_qat(megakernel, model, profile.mlp_workers, profile.specialize_mixed_experts)
     engine_type = megakernel.FullModel
-    if profile.chip == "M4 Max":
+    if profile.chip in ("M4 Max", "M5 Pro"):
         from rec_mlx.m4_max import FullModel as engine_type
 
     engine = engine_type(
@@ -43,10 +43,11 @@ def build_decoder(model, *, optimized):
     if not optimized:
         return engine, None
 
-    if profile.chip == "M4 Max":
+    if profile.chip in ("M4 Max", "M5 Pro"):
         from rec_mlx.m4_max_prefill import optimize_prefill
 
-        optimize_prefill(model)
+        is_m4_max = profile.chip == "M4 Max"
+        optimize_prefill(model, dequantize_linear=is_m4_max, fuse_switch_glu=is_m4_max)
 
     from rec_mlx.kernels.activation_optimization import guard
     from rec_mlx.kernels.activation_optimization import transform as fast_activation
@@ -57,7 +58,7 @@ def build_decoder(model, *, optimized):
     spec = captures["decode"]
     guard(megakernel, engine, spec)
     spec = dict(spec, header=fast_activation(spec["header"]))
-    if profile.chip == "M4 Max":
+    if profile.chip in ("M4 Max", "M5 Pro"):
         from rec_mlx.kernels.m4_max import transform as m4_max
 
         spec = dict(spec, header=m4_max(spec["header"]))
