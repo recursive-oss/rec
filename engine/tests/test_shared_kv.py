@@ -78,6 +78,25 @@ class SharedKVTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "invalidated"):
             FullModel.ensure_capacity(engine, state, 1)
 
+    @unittest.skipUnless(mx.metal.is_available(), "requires Apple Metal")
+    def test_write_async_batches_writes_and_touch_resident_pages(self):
+        from rec_mlx.engine import Engine
+
+        storage = self.storage()
+        ring = mx.arange(4 * 513 * 128).reshape(1, 4, 513, 128).astype(mx.bfloat16)
+        dones = storage.write_async(1, 0, ring, -ring)
+        mx.eval(dones)
+        self.assertTrue(mx.array_equal(storage.layer(1)[0:1], ring).item())
+        self.assertTrue(mx.array_equal(storage.layer(1)[1:2], -ring).item())
+
+        engine = Engine.__new__(Engine)
+        engine.mx = mx
+        engine._touch_kernel = None
+        engine.runtime = SimpleNamespace(banks=[storage.banks[0]])
+        engine._prompt_cache = SimpleNamespace(storage=storage)
+        engine.touch_resident_pages()
+        self.assertIsNotNone(engine._touch_kernel)
+
 
 if __name__ == "__main__":
     unittest.main()

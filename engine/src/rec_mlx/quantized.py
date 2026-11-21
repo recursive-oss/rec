@@ -138,10 +138,17 @@ class QATSession:
             raise PrefillCancelled()
         # Global attention already uses decode storage. Only the bounded sliding
         # rings need copying; retain their native prefix for subsequent requests.
+        write_async = getattr(state["kv"], "write_async", None)
+        dones = []
         for index, entry in enumerate(cache):
             if not state["kv"].rows[index][1]:
                 keys, values = entry._prior()
-                state["kv"].write(index, 0, keys, values)
+                if write_async is not None:
+                    dones.extend(write_async(index, 0, keys, values))
+                else:
+                    state["kv"].write(index, 0, keys, values)
+        if dones:
+            mx.eval(dones)
         state["capacity"] = state["kv"].capacity
         state["position"] = state["initial"] = len(tokens)
         self._state = state
